@@ -1,31 +1,18 @@
-
 .venv/
-
 __pycache__/
-
-*.pyc
-
+*.py[cod]
 .DS_Store
+.env
+.streamlit/secrets.toml
 
 sec_filing_text_cache/
-
 sec_filing_index_cache/
-
 sec_company_facts_cache/
 
 paper_transactions.csv
-
 paper_portfolio_snapshot.csv
-
 paper_portfolio_history.csv
 
-.streamlit/secrets.toml
-
-.env
-
 XBRL/indicators_by_company.csv
-
 XBRL/companies.csv
-
 XBRL/companies.json
-

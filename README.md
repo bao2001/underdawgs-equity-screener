@@ -240,6 +240,38 @@ The app will open at `http://localhost:8501` in your browser.
 
 ---
 
+## Deploy Online
+
+### Render
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/bao2001/underdawgs-equity-screener)
+
+1. Push this folder to a GitHub repository.
+2. In Render, choose **New > Blueprint** and connect the repository.
+3. Render reads `render.yaml`, builds the app, and assigns a public URL.
+
+The included health check uses Streamlit's `/_stcore/health` endpoint. The free
+Render plan may sleep after a period of inactivity.
+
+### Streamlit Community Cloud
+
+1. Push this folder to a GitHub repository.
+2. In Streamlit Community Cloud, create an app from the repository.
+3. Set the main file path to `app.py` and deploy.
+
+No application secrets are required. Live-price refresh makes outbound requests
+through `yfinance`; the bundled sample dataset remains available if that request
+fails.
+
+### Docker
+
+```bash
+docker build -t underdawgs-equity-screener .
+docker run --rm -p 8501:8501 underdawgs-equity-screener
+```
+
+---
+
 ## Project Structure
 
 ```
