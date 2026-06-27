@@ -1,0 +1,11 @@
+Ticker,Company_Name,Sector,Current_Price,Market_Cap_B,PE_Ratio,PB_Ratio,EV_EBITDA,Revenue_B,EPS_TTM,Revenue_Growth_Pct,Debt_Equity,FCF_B,ROE_Pct,Estimated_Fair_Value,Quality_Score,Report_Risk_Score,Risk_Word_Count,Debt_Mentions,Legal_Mentions,Cost_Pressure_Mentions,Valuation_Gap_Pct,Final_Signal
+AAPL,Apple Inc.,Technology,195.00,3000.0,30.3,48.2,22.1,383.0,6.43,2.1,1.49,99.0,145.0,185.00,78,25,42,18,8,12,-5.1,Fairly valued / neutral
+MSFT,Microsoft Corporation,Technology,420.00,3120.0,36.7,13.1,24.8,237.0,11.45,16.4,0.35,75.0,35.0,465.00,85,18,28,12,5,9,10.7,Research candidate
+NVDA,NVIDIA Corporation,Technology,140.00,3440.0,47.6,34.8,44.2,130.0,2.94,122.4,0.40,60.0,72.0,116.00,88,22,35,15,6,14,-17.1,Potentially overvalued
+JPM,JPMorgan Chase & Co.,Financial Services,220.00,625.0,12.2,1.90,8.4,162.0,18.00,8.5,1.20,35.0,17.0,265.00,74,30,55,38,22,16,20.5,High-priority research candidate
+WMT,Walmart Inc.,Consumer Defensive,85.00,682.0,32.7,7.10,17.8,643.0,2.60,5.1,0.65,7.0,22.0,80.00,65,20,38,22,10,18,-5.9,Fairly valued / neutral
+SONY,Sony Group Corporation,Technology,24.50,148.0,17.8,1.76,7.2,88.0,1.38,6.2,0.45,5.8,10.0,29.00,62,28,44,28,14,20,18.4,Research candidate
+HPQ,HP Inc.,Technology,34.50,33.0,10.3,-8.50,7.9,54.0,3.35,-3.2,4.20,3.2,220.0,41.00,38,58,78,55,35,42,18.8,Possible value trap
+DELL,Dell Technologies Inc.,Technology,125.00,89.0,16.7,7.40,11.6,92.0,7.50,9.2,2.52,4.5,45.0,148.00,62,42,52,42,18,28,18.4,Research candidate
+LOGI,Logitech International S.A.,Technology,64.80,9.2,17.1,3.95,11.8,4.4,3.79,6.1,0.05,0.88,23.0,82.00,72,15,22,10,4,8,26.5,High-priority research candidate
+GRMN,Garmin Ltd.,Technology,186.00,35.4,25.5,5.10,17.4,5.9,7.30,20.0,0.00,1.5,21.0,225.00,76,18,28,14,6,10,21.0,High-priority research candidate
