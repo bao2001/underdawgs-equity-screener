@@ -1,0 +1,4 @@
+model_name,target,n_train,n_test,mae,rmse,r2,is_best
+Ridge Regression,log_market_cap,109,28,0.4548,0.5491,0.8021,True
+Random Forest,log_market_cap,109,28,0.3778,0.5676,0.7885,False
+Mean Prediction (baseline),log_market_cap,109,28,1.1192,1.2475,-0.0217,False

@@ -1,0 +1,36 @@
+ticker,company_name,cik,source,mapping_quality_flag
+MSFT,Microsoft Corp,789019,ticker_mapping_csv,ok
+GOOGL,Google Inc.,1288776,ticker_mapping_csv,ok
+AMZN,Amazon COM Inc,1018724,ticker_mapping_csv,ok
+META,Facebook Inc,1326801,ticker_mapping_csv,ok
+NVDA,Nvidia Corp,1045810,ticker_mapping_csv,ok
+ORCL,Oracle Corp,1341439,ticker_mapping_csv,ok
+NFLX,Netflix Inc,1065280,ticker_mapping_csv,ok
+TSLA,Tesla Motors Inc,1318605,ticker_mapping_csv,ok
+ADBE,Adobe Systems Inc,796343,ticker_mapping_csv,ok
+QCOM,Qualcomm Inc/De,804328,ticker_mapping_csv,ok
+TXN,Texas Instruments Inc,97476,ticker_mapping_csv,ok
+CRM,Salesforce COM Inc,1108524,ticker_mapping_csv,ok
+GRMN,Garmin LTD,1121788,ticker_mapping_csv,ok
+LOGI,Logitech International SA,1032975,ticker_mapping_csv,ok
+HPQ,HP Inc,47217,ticker_mapping_csv,ok
+SNDK,Sandisk Corp,1000180,ticker_mapping_csv,ok
+INTC,Intel Corp,50863,ticker_mapping_csv,ok
+CSCO,Cisco Systems Inc,858877,ticker_mapping_csv,ok
+MU,Micron Technology Inc,723125,ticker_mapping_csv,ok
+AMAT,Applied Materials Inc,6951,ticker_mapping_csv,ok
+ADI,Analog Devices Inc,6281,ticker_mapping_csv,ok
+XLNX,Xilinx Inc,743988,ticker_mapping_csv,ok
+WDC,Western Digital Corp,106040,ticker_mapping_csv,ok
+STX,Seagate Technology PLC,1137789,ticker_mapping_csv,ok
+LRCX,LAM Research Corp,707549,ticker_mapping_csv,ok
+INTU,Intuit Inc,896878,ticker_mapping_csv,ok
+SYMC,Symantec Corp,849399,ticker_mapping_csv,ok
+ADSK,Autodesk Inc,769397,ticker_mapping_csv,ok
+VMW,VMware Inc,1124610,ticker_mapping_csv,ok
+EA,Electronic Arts Inc,712515,ticker_mapping_csv,ok
+ATVI,Activision Blizzard Inc,718877,ticker_mapping_csv,ok
+EBAY,eBay Inc,1065088,ticker_mapping_csv,ok
+MSI,Motorola Solutions Inc,68505,ticker_mapping_csv,ok
+JNPR,Juniper Networks Inc,1043604,ticker_mapping_csv,ok
+AKAM,Akamai Technologies Inc,1086222,ticker_mapping_csv,ok
