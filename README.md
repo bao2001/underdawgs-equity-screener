@@ -43,7 +43,7 @@ The app will open at `http://localhost:8501` in your browser.
 
 ### Render
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/martinbauer1/underdawgs-equity-screener)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/bao2001/underdawgs-equity-screener)
 
 1. Push this folder to a GitHub repository.
 2. In Render, choose **New > Blueprint** and connect the repository.
