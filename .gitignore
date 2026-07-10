@@ -16,3 +16,8 @@ paper_portfolio_history.csv
 XBRL/indicators_by_company.csv
 XBRL/companies.csv
 XBRL/companies.json
+
+__pycache__/
+*.pyc
+watchlist.csv
+research_notes.csv

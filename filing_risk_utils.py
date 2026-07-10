@@ -55,6 +55,10 @@ RISK_FEATURES_PATH     = os.path.join(_HERE, "filing_risk_features.csv")
 RISK_SCORES_PATH       = os.path.join(_HERE, "filing_risk_scores.csv")
 RISK_OUTPUTS_PATH      = os.path.join(_HERE, "model_outputs_combined_calibrated_risk.csv")
 
+LATEST_10Q_RISK_PATH         = os.path.join(_HERE, "latest_10q_risk_scores.csv")
+FILING_RISK_UPDATE_PATH      = os.path.join(_HERE, "filing_risk_current_update.csv")
+FILING_10Q_TEXT_CACHE_DIR    = os.path.join(_HERE, "sec_filing_10q_cache")
+
 MAX_DOWNLOAD_BYTES     = 5 * 1024 * 1024   # 5 MB per filing
 MAX_TEXT_CHARS         = 300_000            # keep first 300K chars of cleaned text
 SEC_RATE_LIMIT_SLEEP   = 0.12              # seconds between SEC API calls
@@ -1017,7 +1021,7 @@ def get_filing_risk_diagnostics() -> dict:
 
 # ── Main pipeline ──────────────────────────────────────────────────────────────
 
-def run_filing_risk_pipeline(verbose: bool = True) -> None:
+def run_filing_risk_pipeline(verbose: bool = True, run_10q: bool = False) -> None:
     """
     Full pipeline:
       1. Load ticker/CIK mapping
@@ -1026,6 +1030,7 @@ def run_filing_risk_pipeline(verbose: bool = True) -> None:
       4. Compute risk features
       5. Compute risk scores
       6. Merge into calibrated model outputs
+      7. (Optional) Run 10-Q quarterly risk update pipeline if run_10q=True
     """
     print("=" * 65)
     print("SEC Filing Risk Extraction Pipeline")
@@ -1124,6 +1129,427 @@ def run_filing_risk_pipeline(verbose: bool = True) -> None:
     print(f"  Next step: run the Streamlit app to see filing-risk adjusted signals.")
     print("=" * 65)
 
+    if run_10q:
+        run_10q_risk_pipeline(verbose=verbose)
+
+
+# ── 10-Q quarterly risk update pipeline ───────────────────────────────────────
+
+def find_latest_10q_filing(submissions: dict) -> dict | None:
+    """
+    Find the most recent 10-Q filing in SEC EDGAR submissions.
+
+    Returns a dict with keys: accession_number, form_type, filing_date,
+    report_date, primary_doc — or None if not found.
+    """
+    try:
+        recent  = submissions.get("filings", {}).get("recent", {})
+        filings = _parse_filings_recent(recent)
+        if filings.empty:
+            return None
+
+        quarterly_forms = {"10-Q"}
+        if "form" not in filings.columns:
+            return None
+
+        mask_form = filings["form"].isin(quarterly_forms)
+        quarterly = filings[mask_form].copy()
+        if quarterly.empty:
+            return None
+
+        # Sort by most recently filed first
+        if "filingDate" in quarterly.columns:
+            quarterly = quarterly.sort_values("filingDate", ascending=False)
+
+        row = quarterly.iloc[0]
+        return {
+            "accession_number": str(row.get("accession_number", "")),
+            "form_type":        str(row.get("form", "10-Q")),
+            "filing_date":      str(row.get("filingDate", ""))[:10],
+            "report_date":      str(row.get("reportDate", ""))[:10] if "reportDate" in row else "",
+            "primary_doc":      str(row.get("primaryDocument", "")),
+        }
+    except Exception:
+        return None
+
+
+def _10q_text_cache_path(ticker: str) -> str:
+    """Return the cache file path for a ticker's latest 10-Q text."""
+    os.makedirs(FILING_10Q_TEXT_CACHE_DIR, exist_ok=True)
+    return os.path.join(FILING_10Q_TEXT_CACHE_DIR, f"{ticker.upper()}_10Q.txt")
+
+
+def _is_10q_cached(ticker: str) -> bool:
+    """Return True if a valid 10-Q text cache exists for the ticker."""
+    path = _10q_text_cache_path(ticker)
+    return os.path.exists(path) and os.path.getsize(path) > 100
+
+
+def _save_10q_text_cache(ticker: str, text: str) -> None:
+    """Save 10-Q plain text to the cache file (capped at MAX_TEXT_CHARS)."""
+    path = _10q_text_cache_path(ticker)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text[:MAX_TEXT_CHARS])
+    except Exception:
+        pass
+
+
+def _load_10q_text_cache(ticker: str) -> str | None:
+    """Load and return cached 10-Q text, or None if missing/unreadable."""
+    path = _10q_text_cache_path(ticker)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return None
+
+
+def run_10q_risk_pipeline(verbose: bool = True) -> None:
+    """
+    10-Q quarterly risk update pipeline.
+
+    For each ticker in the model universe:
+      1. Fetch SEC submissions (cached)
+      2. Find the most recent 10-Q filing
+      3. Download and cache the 10-Q text
+      4. Extract risk features
+      5. Compute 0-100 risk scores
+      6. Save latest_10q_risk_scores.csv
+      7. Merge with annual 10-K scores to produce filing_risk_current_update.csv
+         with filing_risk_delta and filing_risk_trend columns.
+    """
+    print("=" * 65)
+    print("10-Q Quarterly Risk Update Pipeline")
+    print("=" * 65)
+    os.makedirs(FILING_10Q_TEXT_CACHE_DIR, exist_ok=True)
+
+    # ── 1. Load CIK mapping ───────────────────────────────────────────────────
+    print("\n── Step 1: Ticker/CIK mapping ──")
+    ticker_cik_df, msg = load_ticker_cik_mapping()
+    print(f"  {msg}")
+    if ticker_cik_df is None:
+        print("  Cannot continue without CIK mapping. Run modern_fundamentals_utils.py first.")
+        return
+
+    # ── 2. Load existing 10-K risk scores for ticker list ────────────────────
+    print("\n── Step 2: Load annual 10-K risk scores ──")
+    annual_risk_df = None
+    if os.path.exists(RISK_SCORES_PATH):
+        try:
+            annual_risk_df = pd.read_csv(RISK_SCORES_PATH)
+            print(f"  Loaded {len(annual_risk_df)} rows from filing_risk_scores.csv")
+        except Exception as exc:
+            print(f"  Warning: could not load filing_risk_scores.csv: {exc}")
+    else:
+        print("  filing_risk_scores.csv not found — delta/trend will be unavailable.")
+
+    # Build per-ticker annual score and filing date (most recent year with a real score)
+    annual_by_ticker:        dict = {}
+    annual_date_by_ticker:   dict = {}
+    annual_year_by_ticker:   dict = {}
+    annual_cname_by_ticker:  dict = {}
+    if annual_risk_df is not None and "ticker" in annual_risk_df.columns:
+        for ticker, grp in annual_risk_df.groupby("ticker"):
+            real_rows = grp[grp.get("risk_score_source", pd.Series(dtype=str)) == "real_sec_filing"] \
+                if "risk_score_source" in grp.columns \
+                else grp[grp["report_risk_score_real"].notna()] \
+                if "report_risk_score_real" in grp.columns else pd.DataFrame()
+            if not real_rows.empty:
+                if "year" in real_rows.columns:
+                    latest_row = real_rows.sort_values("year", ascending=False).iloc[0]
+                else:
+                    latest_row = real_rows.iloc[-1]
+                score = latest_row.get("report_risk_score_real")
+                if pd.notna(score):
+                    _tu = str(ticker).upper()
+                    annual_by_ticker[_tu]       = float(score)
+                    annual_date_by_ticker[_tu]  = str(latest_row.get("filing_date", "") or "")
+                    annual_year_by_ticker[_tu]  = int(latest_row["year"]) if "year" in latest_row and pd.notna(latest_row.get("year")) else None
+                    annual_cname_by_ticker[_tu] = str(latest_row.get("company_name", "") or "")
+
+    # ── 3. Process each ticker ────────────────────────────────────────────────
+    print("\n── Step 3: Fetch 10-Q filings and extract risk features ──")
+    cik_map  = ticker_cik_df.set_index("ticker")["cik"].to_dict()
+    name_map = {}
+    if "company_name" in ticker_cik_df.columns:
+        name_map = ticker_cik_df.set_index("ticker")["company_name"].to_dict()
+
+    tickers = sorted(ticker_cik_df["ticker"].str.upper().unique().tolist())
+    feature_rows = []
+    meta_rows    = []   # filing metadata per ticker
+
+    headers = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip,deflate"}
+
+    for i, ticker in enumerate(tickers, 1):
+        cik   = cik_map.get(ticker, cik_map.get(ticker.lower()))
+        cname = name_map.get(ticker, ticker)
+
+        base_meta = {
+            "ticker":                  ticker,
+            "company_name":            cname,
+            "cik":                     str(cik) if cik else "",
+            "latest_10q_filing_date":  "",
+            "latest_10q_period":       "",
+            "latest_10q_form_type":    "",
+            "latest_10q_data_quality_flag": "cik_missing",
+            "latest_10q_warning_text": "",
+        }
+
+        if verbose:
+            cached_tag = " [cached]" if _is_10q_cached(ticker) else ""
+            print(f"  [{i:3d}/{len(tickers)}] {ticker}{cached_tag} …", end=" ", flush=True)
+
+        if not cik:
+            base_meta["latest_10q_warning_text"] = f"No CIK for {ticker}"
+            meta_rows.append(base_meta)
+            if verbose:
+                print("no CIK")
+            continue
+
+        # Fetch submissions (cached)
+        try:
+            sub, src, sub_msg = fetch_company_submissions(str(cik))
+        except Exception as exc:
+            sub, src, sub_msg = None, "error", str(exc)
+
+        if sub is None:
+            base_meta["latest_10q_data_quality_flag"] = "submissions_error"
+            base_meta["latest_10q_warning_text"]      = sub_msg
+            meta_rows.append(base_meta)
+            if verbose:
+                print(f"submissions error [{sub_msg}]")
+            continue
+
+        # Find latest 10-Q
+        filing = find_latest_10q_filing(sub)
+        if filing is None:
+            base_meta["latest_10q_data_quality_flag"] = "not_found"
+            base_meta["latest_10q_warning_text"]      = "No 10-Q found in submissions"
+            meta_rows.append(base_meta)
+            if verbose:
+                print("not found")
+            continue
+
+        base_meta["latest_10q_filing_date"] = filing["filing_date"]
+        base_meta["latest_10q_period"]      = filing["report_date"]
+        base_meta["latest_10q_form_type"]   = filing["form_type"]
+
+        # Fetch text (from cache or download)
+        text = None
+        fetch_status = ""
+        if _is_10q_cached(ticker):
+            text = _load_10q_text_cache(ticker)
+            fetch_status = "cache"
+
+        if not text:
+            acc      = filing.get("accession_number", "")
+            pdoc     = filing.get("primary_doc", "")
+            if not acc or not pdoc:
+                base_meta["latest_10q_data_quality_flag"] = "missing_accession_or_doc"
+                base_meta["latest_10q_warning_text"]      = "No accession/doc in filing metadata"
+                meta_rows.append(base_meta)
+                if verbose:
+                    print("missing accession/doc")
+                continue
+
+            try:
+                acc_clean = acc.replace("-", "")
+                url       = f"{SEC_EDGAR_ARCHIVES}/{int(cik)}/{acc_clean}/{pdoc}"
+                raw       = _http_get(url, headers, max_bytes=MAX_DOWNLOAD_BYTES)
+                time.sleep(SEC_RATE_LIMIT_SLEEP)
+
+                if raw is None:
+                    base_meta["latest_10q_data_quality_flag"] = "fetch_failed"
+                    base_meta["latest_10q_warning_text"]      = f"Failed to download {url}"
+                    meta_rows.append(base_meta)
+                    if verbose:
+                        print("fetch failed")
+                    continue
+
+                content_start = raw[:1000].lower()
+                if (b"<html" in content_start or b"<!doctype" in content_start
+                        or b"<body" in content_start):
+                    text = _html_to_text(raw)
+                else:
+                    try:
+                        text = raw.decode("utf-8", errors="replace")[:MAX_TEXT_CHARS]
+                    except Exception:
+                        text = raw.decode("latin-1", errors="replace")[:MAX_TEXT_CHARS]
+
+                if text and len(text) >= 200:
+                    _save_10q_text_cache(ticker, text)
+                    fetch_status = "downloaded"
+                else:
+                    text = None
+                    fetch_status = "too_short"
+            except Exception as exc:
+                base_meta["latest_10q_data_quality_flag"] = "parse_error"
+                base_meta["latest_10q_warning_text"]      = str(exc)
+                meta_rows.append(base_meta)
+                if verbose:
+                    print(f"error: {exc}")
+                continue
+
+        if not text or len(text) < 200:
+            base_meta["latest_10q_data_quality_flag"] = "parse_error"
+            base_meta["latest_10q_warning_text"]      = f"text too short after fetch ({fetch_status})"
+            meta_rows.append(base_meta)
+            if verbose:
+                print(f"parse error ({fetch_status})")
+            continue
+
+        # Extract risk features
+        try:
+            feat = extract_risk_features(
+                text, ticker, cname, str(cik),
+                year=0, form_type="10-Q",
+                filing_date=filing["filing_date"],
+            )
+        except Exception as exc:
+            feat = None
+            base_meta["latest_10q_data_quality_flag"] = "feature_error"
+            base_meta["latest_10q_warning_text"]      = str(exc)
+            meta_rows.append(base_meta)
+            if verbose:
+                print(f"feature error: {exc}")
+            continue
+
+        base_meta["latest_10q_data_quality_flag"] = feat.get("data_quality_flag", "ok")
+        base_meta["latest_10q_warning_text"]      = feat.get("failure_reason", "")
+        meta_rows.append(base_meta)
+        feature_rows.append(feat)
+
+        if verbose:
+            print(f"ok  [{fetch_status}]  {feat.get('total_words', 0):,} words  "
+                  f"risk={feat.get('risk_words_per_1000', 0):.1f}/1k")
+
+    # ── 4. Compute 10-Q risk scores ───────────────────────────────────────────
+    print("\n── Step 4: Compute 10-Q risk scores ──")
+    if feature_rows:
+        feat_df   = pd.DataFrame(feature_rows)
+        scored_df = compute_risk_scores(feat_df)
+        # Build a quick lookup: ticker → score row
+        scored_by_ticker: dict = {}
+        for _, srow in scored_df.iterrows():
+            t = str(srow.get("ticker", "")).upper()
+            scored_by_ticker[t] = srow
+        ok_n = (scored_df["data_quality_flag"] == "ok").sum()
+        print(f"  10-Q scores computed: {ok_n}/{len(scored_df)} ok")
+    else:
+        scored_by_ticker = {}
+        print("  No 10-Q features to score.")
+
+    # ── 5. Save latest_10q_risk_scores.csv ────────────────────────────────────
+    print("\n── Step 5: Save latest_10q_risk_scores.csv ──")
+    out_rows = []
+    for meta in meta_rows:
+        ticker = str(meta["ticker"]).upper()
+        srow   = scored_by_ticker.get(ticker)
+        def _int_safe(s, k):
+            return int(s[k]) if s is not None and k in s and pd.notna(s.get(k)) else None
+        def _float_safe(s, k):
+            return float(s[k]) if s is not None and k in s and pd.notna(s.get(k)) else None
+        out_row = {
+            "ticker":                               ticker,
+            "company_name":                         meta.get("company_name", ""),
+            "cik":                                  meta.get("cik", ""),
+            "latest_10q_filing_date":               meta.get("latest_10q_filing_date", ""),
+            "latest_10q_period":                    meta.get("latest_10q_period", ""),
+            "latest_10q_form_type":                 meta.get("latest_10q_form_type", ""),
+            "latest_10q_total_words":               _int_safe(srow, "total_words"),
+            "latest_10q_risk_word_count":           _int_safe(srow, "risk_word_count"),
+            "latest_10q_risk_score":                _float_safe(srow, "report_risk_score_real"),
+            "latest_10q_risk_words_per_1000":       _float_safe(srow, "risk_words_per_1000"),
+            "latest_10q_debt_liquidity_mentions":   _int_safe(srow, "debt_mentions"),
+            "latest_10q_legal_regulatory_mentions": _int_safe(srow, "legal_mentions"),
+            "latest_10q_uncertainty_mentions":      _int_safe(srow, "uncertainty_mentions"),
+            "latest_10q_cost_cyber_mentions":       (
+                (_int_safe(srow, "cost_pressure_mentions") or 0) +
+                (_int_safe(srow, "cybersecurity_mentions") or 0)
+            ) if srow is not None else None,
+            "latest_10q_data_quality_flag":         meta.get("latest_10q_data_quality_flag", ""),
+            "latest_10q_warning_text":              meta.get("latest_10q_warning_text", ""),
+        }
+        out_rows.append(out_row)
+
+    try:
+        out_df = pd.DataFrame(out_rows)
+        out_df.to_csv(LATEST_10Q_RISK_PATH, index=False)
+        ok_n = (out_df["latest_10q_data_quality_flag"] == "ok").sum()
+        print(f"  Saved {len(out_df)} rows ({ok_n} ok) → latest_10q_risk_scores.csv")
+    except Exception as exc:
+        print(f"  ERROR saving latest_10q_risk_scores.csv: {exc}")
+        out_df = pd.DataFrame(out_rows)
+
+    # ── 6 & 7. Merge with annual 10-K scores; compute delta/trend ─────────────
+    print("\n── Step 6/7: Merge with annual 10-K scores → filing_risk_current_update.csv ──")
+    update_rows = []
+    for _, row in out_df.iterrows():
+        ticker          = str(row["ticker"]).upper()
+        q_score         = row.get("latest_10q_risk_score")
+        q_score_valid   = (q_score is not None) and pd.notna(q_score)
+        k_score         = annual_by_ticker.get(ticker)
+        k_score_valid   = (k_score is not None) and pd.notna(k_score)
+
+        if q_score_valid and k_score_valid:
+            delta = round(float(q_score) - float(k_score), 1)
+            if delta >= 10:
+                trend = "Increasing"
+            elif delta <= -10:
+                trend = "Decreasing"
+            else:
+                trend = "Stable"
+        else:
+            delta = None
+            trend = "Unavailable"
+
+        _warn = ""
+        if q_score_valid:
+            tw = row.get("latest_10q_total_words")
+            if tw is not None and pd.notna(tw) and int(tw) < 500:
+                _warn = "10-Q text unusually short; score may be inflated."
+        if not _warn:
+            _warn = str(row.get("latest_10q_warning_text") or "")
+        update_rows.append({
+            "ticker":                    ticker,
+            "company_name":              annual_cname_by_ticker.get(ticker, row.get("company_name", "")),
+            "latest_model_year":         annual_year_by_ticker.get(ticker),
+            "annual_10k_risk_score":     float(k_score) if k_score_valid else None,
+            "annual_10k_filing_date":    annual_date_by_ticker.get(ticker, ""),
+            "latest_10q_risk_score":     float(q_score) if q_score_valid else None,
+            "latest_10q_filing_date":    row.get("latest_10q_filing_date", ""),
+            "filing_risk_delta":         delta,
+            "filing_risk_trend":         trend,
+            "current_risk_warning_text": _warn,
+        })
+
+    try:
+        update_df = pd.DataFrame(update_rows)
+        update_df.to_csv(FILING_RISK_UPDATE_PATH, index=False)
+        trend_counts = update_df["filing_risk_trend"].value_counts().to_dict()
+        summary = ", ".join(f"{k}: {v}" for k, v in trend_counts.items())
+        print(f"  Saved {len(update_df)} rows → filing_risk_current_update.csv ({summary})")
+    except Exception as exc:
+        print(f"  ERROR saving filing_risk_current_update.csv: {exc}")
+
+    print("\n" + "=" * 65)
+    print("10-Q pipeline complete.")
+    print("=" * 65)
+
 
 if __name__ == "__main__":
-    run_filing_risk_pipeline(verbose=True)
+    import argparse
+    _parser = argparse.ArgumentParser()
+    _parser.add_argument("--10q", dest="run_10q", action="store_true", default=False,
+                         help="Also run the 10-Q quarterly risk update pipeline.")
+    _parser.add_argument("--10q-only", dest="only_10q", action="store_true", default=False,
+                         help="Run only the 10-Q pipeline (skip 10-K if already done).")
+    _args = _parser.parse_args()
+
+    if _args.only_10q:
+        run_10q_risk_pipeline(verbose=True)
+    else:
+        run_filing_risk_pipeline(verbose=True, run_10q=_args.run_10q)

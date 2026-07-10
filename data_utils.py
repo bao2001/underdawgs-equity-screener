@@ -331,3 +331,32 @@ def load_current_market_data() -> tuple:
         return df, f"Current market data: {ok}/{len(df)} tickers OK (as of {str(last)[:10]})"
     except Exception as exc:
         return None, f"Error loading current_market_data.csv: {exc}"
+
+
+LATEST_10Q_RISK_CSV    = os.path.join(_DIR, "latest_10q_risk_scores.csv")
+FILING_RISK_UPDATE_CSV = os.path.join(_DIR, "filing_risk_current_update.csv")
+
+
+def load_10q_risk_scores() -> tuple:
+    """Load latest 10-Q risk scores. Returns (df, status_msg). df is None if file absent."""
+    if not os.path.exists(LATEST_10Q_RISK_CSV):
+        return None, "latest_10q_risk_scores.csv not found — run: python3 filing_risk_utils.py --10q"
+    try:
+        df = pd.read_csv(LATEST_10Q_RISK_CSV)
+        ok = (df.get("latest_10q_data_quality_flag", pd.Series()) == "ok").sum()
+        return df, f"10-Q risk scores: {len(df)} tickers ({ok} ok)"
+    except Exception as exc:
+        return None, f"Error loading 10-Q risk scores: {exc}"
+
+
+def load_filing_risk_update() -> tuple:
+    """Load filing risk current update (10-K vs 10-Q trend). Returns (df, status_msg)."""
+    if not os.path.exists(FILING_RISK_UPDATE_CSV):
+        return None, "filing_risk_current_update.csv not found — run: python3 filing_risk_utils.py --10q"
+    try:
+        df = pd.read_csv(FILING_RISK_UPDATE_CSV)
+        trend_counts = df["filing_risk_trend"].value_counts().to_dict() if "filing_risk_trend" in df.columns else {}
+        summary = ", ".join(f"{k}: {v}" for k, v in trend_counts.items())
+        return df, f"Filing risk update: {len(df)} tickers ({summary})"
+    except Exception as exc:
+        return None, f"Error loading filing risk update: {exc}"
