@@ -18,6 +18,7 @@ from data_utils import (
     get_screener_data,
     load_model_outputs,
     load_current_market_data,
+    fetch_current_market_data,
 )
 from paper_portfolio_utils import (
     load_paper_portfolio, save_paper_portfolio,
@@ -52,57 +53,85 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-/* ── Sidebar: narrow by default, expands on hover ─────────────────────── */
-section[data-testid="stSidebar"] {
-    min-width: 70px !important;
-    max-width: 70px !important;
-    background-color: #1a2744 !important;
-    overflow: hidden;
-    transition: min-width 0.28s cubic-bezier(0.4,0,0.2,1),
-                max-width 0.28s cubic-bezier(0.4,0,0.2,1);
+/* ── Remove top white bar (Streamlit header chrome) ─────────────────── */
+[data-testid="stHeader"]     { display: none !important; }
+[data-testid="stDecoration"] { display: none !important; }
+[data-testid="stToolbar"]    { display: none !important; }
+
+/* ── Hide native Streamlit sidebar + collapse arrow completely ───────── */
+[data-testid="stSidebar"]             { display: none !important; }
+[data-testid="collapsedControl"]      { display: none !important; }
+[data-testid="stSidebarResizeHandle"] { display: none !important; }
+
+/* ── Custom fixed nav rail (independent of Streamlit sidebar) ────────── */
+.ud-nav-rail {
+    position: fixed;
+    left: 0; top: 0;
+    height: 100vh; width: 52px;
+    background: #14213d;
+    z-index: 9999; overflow: hidden;
+    transition: width 0.22s cubic-bezier(0.4,0,0.2,1);
+    box-shadow: 2px 0 12px rgba(0,0,0,0.28);
 }
-section[data-testid="stSidebar"]:hover {
-    min-width: 230px !important;
-    max-width: 230px !important;
+.ud-nav-rail:hover { width: 260px; }
+
+/* Nav item rows */
+.ud-nav-item {
+    display: flex; align-items: center;
+    padding: 2px 6px; margin: 1px 0; min-height: 44px;
+    border-radius: 8px; text-decoration: none !important;
+    color: inherit !important; transition: background 0.14s ease;
 }
-section[data-testid="stSidebar"] * { color: #e8edf5 !important; }
-/* Hide native collapse button — sidebar must stay in expanded DOM state for hover */
-button[data-testid="stSidebarCollapseButton"],
-[data-testid="collapsedControl"]           { display: none !important; }
-/* Inner content div: render at full expanded width, clipped by sidebar overflow */
-section[data-testid="stSidebar"] > div:first-child { min-width: 230px; }
-/* Heading "## Underdawg" — compact text when narrow */
-section[data-testid="stSidebar"] h2 {
-    white-space: nowrap;
-    font-size: 13px !important;
+.ud-nav-item:hover {
+    background: rgba(37,99,235,0.28);
+    text-decoration: none !important;
 }
-/* Radio label text: hide when narrow, reveal on hover */
-section[data-testid="stSidebar"] .stRadio label p,
-section[data-testid="stSidebar"] .stRadio label span {
-    font-size: 0px !important;
-    white-space: nowrap;
-    overflow: hidden;
-    transition: font-size 0.15s ease 0.05s;
+.ud-nav-item-active {
+    display: flex; align-items: center;
+    padding: 2px 6px; margin: 1px 0; min-height: 44px;
+    border-radius: 8px; background: rgba(37,99,235,0.35);
 }
-section[data-testid="stSidebar"]:hover .stRadio label p,
-section[data-testid="stSidebar"]:hover .stRadio label span {
-    font-size: 14px !important;
+
+/* Icon square — always visible */
+.ud-nav-icon {
+    width: 40px; min-width: 40px; height: 40px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 8px; flex-shrink: 0;
+    font-size: 12px; font-weight: 700; color: #c7d5ea;
 }
-/* Caption / small text */
-section[data-testid="stSidebar"] .stCaption p,
-section[data-testid="stSidebar"] small {
-    font-size: 0px !important;
-    line-height: 0;
-    overflow: hidden;
-    transition: font-size 0.15s ease 0.05s, line-height 0.15s ease;
+.ud-nav-item-active .ud-nav-icon { background: #2563eb; color: #fff; }
+.ud-nav-item:hover .ud-nav-icon   { color: #fff; }
+
+/* Label — hidden when collapsed, revealed on rail hover */
+.ud-nav-label {
+    font-size: 13px; font-weight: 500; color: #c7d5ea;
+    white-space: nowrap; margin-left: 10px;
+    opacity: 0; visibility: hidden; max-width: 0; overflow: hidden;
+    transition: opacity 0.14s ease, max-width 0.22s cubic-bezier(0.4,0,0.2,1), visibility 0s linear 0.22s;
 }
-section[data-testid="stSidebar"]:hover .stCaption p,
-section[data-testid="stSidebar"]:hover small {
-    font-size: 11px !important;
-    line-height: 1.4;
+.ud-nav-rail:hover .ud-nav-label {
+    opacity: 1; visibility: visible; max-width: 180px;
+    transition: opacity 0.14s ease 0.07s, max-width 0.22s cubic-bezier(0.4,0,0.2,1), visibility 0s;
 }
-/* Divider: always visible */
-section[data-testid="stSidebar"] hr { opacity: 0.3; margin: 6px 0; }
+.ud-nav-item-active .ud-nav-label { font-weight: 600; color: #e8edf5; }
+.ud-nav-item:hover .ud-nav-label  { color: #fff; }
+
+/* Brand/subtitle/footer text — same hide/show pattern */
+.ud-nav-text-hide {
+    opacity: 0; visibility: hidden; max-width: 0;
+    overflow: hidden; white-space: nowrap; display: inline-block;
+    transition: opacity 0.14s ease, max-width 0.22s cubic-bezier(0.4,0,0.2,1), visibility 0s linear 0.22s;
+}
+.ud-nav-rail:hover .ud-nav-text-hide {
+    opacity: 1; visibility: visible; max-width: 200px;
+    transition: opacity 0.14s ease 0.07s, max-width 0.22s cubic-bezier(0.4,0,0.2,1), visibility 0s;
+}
+
+/* ── Offset main content so it starts after the 52px rail ───────────── */
+.block-container {
+    padding-left: 72px !important;
+    padding-top: 1.5rem !important;
+}
 
 [data-testid="stMetric"] {
     background: #f8fafc;
@@ -154,7 +183,7 @@ section[data-testid="stSidebar"] hr { opacity: 0.3; margin: 6px 0; }
     color: white;
     border-radius: 12px;
     padding: 36px 40px;
-    margin-bottom: 28px;
+    margin-bottom: 14px;
 }
 .hero-banner h1 { color: white; margin: 0 0 8px 0; font-size: 28px; }
 .hero-banner p  { color: #c7d8f5; margin: 0; font-size: 15px; }
@@ -255,6 +284,98 @@ section[data-testid="stSidebar"] hr { opacity: 0.3; margin: 6px 0; }
 .section-subtitle {
     font-size: 13px; color: #64748b; margin: -8px 0 14px 0; line-height: 1.5;
 }
+/* ── Home CTA cards ─────────────────────────────────────────────────── */
+.cta-card {
+    background: #ffffff;
+    border: 2px solid #e2e8f0;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+    margin-bottom: 6px;
+    display: flex;
+    flex-direction: column;
+    min-height: 300px;
+}
+.cta-card:hover {
+    box-shadow: 0 8px 24px rgba(37,99,235,0.13);
+    border-color: #2563eb;
+}
+.cta-card-body {
+    padding: 20px 20px 14px 20px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ── Home CTA anchor cards (kept for query-param sidebar links, not used for card HTML) */
+.home-cta-card {
+    display: block;
+    text-decoration: none !important;
+    color: inherit !important;
+    background: #ffffff;
+    border: 2px solid #e2e8f0;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.18s ease;
+    cursor: pointer;
+}
+.home-cta-card:hover {
+    box-shadow: 0 10px 32px rgba(37,99,235,0.18);
+    border-color: #2563eb;
+    transform: translateY(-3px);
+    text-decoration: none !important;
+    color: inherit !important;
+}
+.home-cta-card:active {
+    transform: translateY(0);
+    box-shadow: 0 3px 10px rgba(37,99,235,0.1);
+}
+.cta-card-body { padding: 20px 20px 14px 20px; }
+.cta-card-footer {
+    padding: 11px 20px;
+    background: #f0f7ff;
+    border-top: 1px solid #e2e8f0;
+    font-size: 14px;
+    font-weight: 700;
+    color: #2563eb;
+    transition: background 0.18s ease, color 0.18s ease;
+    letter-spacing: 0.1px;
+}
+.home-cta-card:hover .cta-card-footer {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+.cta-eyebrow {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    color: #2563eb;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+.cta-title {
+    font-size: 18px;
+    font-weight: 800;
+    color: #1a2744;
+    margin-bottom: 4px;
+    line-height: 1.2;
+}
+.cta-subtitle {
+    font-size: 13px;
+    color: #64748b;
+    line-height: 1.5;
+    margin-bottom: 12px;
+}
+.cta-preview-box {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 10px 12px;
+    flex: 1;
+    min-height: 120px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -281,11 +402,19 @@ if "paper_ticker_prefill" not in st.session_state:
 if "paper_source_prefill" not in st.session_state:
     st.session_state.paper_source_prefill = "sample"
 
-# Resolve pending navigation BEFORE any widget is instantiated.
-# Writing to st.session_state.nav_page after the radio widget with key="nav_page"
-# is created raises StreamlitAPIException. Using a staging key sidesteps this.
+# Resolve navigation.  Priority: pending_nav_page (button) > query param (anchor link).
 if "pending_nav_page" in st.session_state:
     st.session_state.nav_page = st.session_state.pop("pending_nav_page")
+else:
+    try:
+        _qp_nav = st.query_params.get("nav", None)
+        if _qp_nav and _qp_nav in PAGES:
+            st.session_state.nav_page = _qp_nav
+        _qp_tab = st.query_params.get("portfolio_tab", None)
+        if _qp_tab:
+            st.session_state["portfolio_tab"] = _qp_tab
+    except Exception:
+        pass
 
 # ── Cached data ───────────────────────────────────────────────────────────────
 
@@ -305,10 +434,24 @@ def _cached_diagnostics() -> tuple:
 
 @st.cache_data(ttl=300)
 def _load_supplementary() -> tuple:
-    """Load model outputs and current market data (cached 5 min)."""
+    """Load model outputs, current market data, and 10-Q risk update (cached 5 min)."""
     mo_df, mo_msg = load_model_outputs()
     cm_df, cm_msg = load_current_market_data()
     return mo_df, mo_msg, cm_df, cm_msg
+
+
+@st.cache_data(ttl=300)
+def _load_10q_data() -> tuple:
+    """Load 10-Q risk scores and trend update (cached 5 min). Returns (q_df, upd_df)."""
+    try:
+        from data_utils import load_10q_risk_scores, load_filing_risk_update
+        q_df,   _ = load_10q_risk_scores()
+        upd_df, _ = load_filing_risk_update()
+        return q_df, upd_df
+    except ImportError:
+        return None, None
+    except Exception:
+        return None, None
 
 
 @st.cache_data(ttl=300)
@@ -354,25 +497,94 @@ def _fetch_replay_daily_cached(
     )
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
+# ── Custom fixed nav rail (not inside st.sidebar) ────────────────────────────
+# Renders as position:fixed HTML — fully independent of Streamlit's native sidebar.
+# Navigation uses <a href="?nav=..." target="_self"> to stay same-tab.
+# Routing block above resolves ?nav query param → st.session_state.nav_page.
 
-with st.sidebar:
-    st.markdown("## Underdawg")
-    st.caption("Equity Research · MSDSBA")
-    st.divider()
+_LOGO_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAACwAAAAsCAYAAAAehFoBAAAGA0lEQVR42u1YbWxb1Rl+"
+    "zjnXcZzEid0kdtKEZA2gdSYFQYAobdogSqdMglZMdTdYgcTJbux0dWyH0oYWXXkaoNJW"
+    "VOUHNFr5Kpq0ekJlo1KF6BAZjEBpl6HV62BMgPhIU6XLB4kd557z8qOO8KZqqkcSpsnP"
+    "z3vP+973POc9z3POBXLIIYcc/q/A5jOZYRg8Hr+GeTxnGADE49eQx3OGotGo+p+atdd7"
+    "RFzmGPatMmwYBs9kz+ePXC84q5fE3IwRMVLnAX7ml0/uOw2ALhWzaAV7vV4Ri8UkAHR0"
+    "3x/QNHEbKZpSyvzQlHJYMCGJswpNiCsZmEMq+fr4yMdPxGIxmRm7KAXPfdDnD9Yzrj3O"
+    "uBjijJ7qf2Lvh5carwe31ygl/UrKJiWp99n+/ae/SdFZtwEAtPlDqzu6I+90+kOr595x"
+    "zgGbvdF9xXc2ebzePM45GPuak3a9p9EXiLzd5g/dmplrQYslItYeCNV1dEfeaQ+E6tKM"
+    "5xGRAFCyfedDn2/b8eAJACgsca11lFddB4C1trZaAUDXgzUdgcjJtq7g1UTEsi066xky"
+    "xogR20Okdj3z5P5/6LpuASAZY/LaG27afW19fWV5eZkLwIYO373HVjevrARAdrvd1HXd"
+    "0t9/4BMF1ceZ2MMYowWULq8AgPv04Nr2QPiFNOMaAE5EHMBVXVuCqS3BsHz52LFUsbNc"
+    "tXV2kc+nNxERn4tPx8DnDx2+Vw99PzP3vDLs8XgYAAiheUnhV0TE4vE4NTQ0CMaYWra8"
+    "fv2a5lWWsfFxOXjylKW5eZVaUe+h1/8w0MAYUyMjI2kziRMRMUXqecGxEQBG0rnnHS2G"
+    "ofn84aN3BwLO9BMNAJBf1Fx79ffOvTU4qKrqvitFgYNEfrHy6QHzrcFBefv6O8Occ6Tb"
+    "hwGAz7fN3u4PH21t3WpdMAv/iR6qbA9EjqR3IAcAW2nFjQUl5S8tqaiRdctXqKLSSrI5"
+    "XGS1l9K61tvVxMS4/OvZswTgJgagpaVFm2uBNn/413f7umuzkdjLbImLeyNvFjYiMgEA"
+    "0SgVl5dfKUj9gGuaO2WafPjcCCWTSZQ6ShDp2UKbvD9Ehx5QXwwPq/sf6NtrtdubBgYG"
+    "zN9c1F/GwVIWjdsAgOjy9p+Wnb/ISQ7Nkp6oUlJsBqlhcCzXhKCx0VHWEw6SsasPTqcT"
+    "UpqIddutQklJe3Y/sqa5uemPO3Yab46dPx8eHv70pCJpI2aZTKvPvG46AsBqapaMEkjz"
+    "9/aWARAg6QDnD2lCK5mcmCDvj73Yv+8xcjqdKplMgDGG2ppaWrasTgGY2XDHHSm3u2LV"
+    "+HQCq0NDhQTkJS40Df/LMs6XShiGIaLRqCJSHxVYSm4GRCu3WLeCcEEpmdQ0jV/45xgb"
+    "eONNDkDk59tgmrOYnJjgqdSMNmua1uOvvJo3ev7c4cTE6MkDTz3XKhj7OBbbJOekbh5b"
+    "AgCgAIDk7AuJxHREK7Q7oGiG5GxQ8bzXrLZ8OnHitclT7767/r2hU50vHv3d5kOHnqbk"
+    "TGrM5So7bc2zfvb7V159G5g5lKbzHqZod2buBTOPLZGdextW3vIXUeCYKnEtjRSWVrxh"
+    "L68ip7vqWQDw3tP10zXr1hOsReMAPHPxgl9c0PZAeLPPHzmcrWlkbc2xWEwZhsE1qf3i"
+    "husbxqqWVlmnphL7OGN2ADRrypXV1dU2m4X/XZoz007Hkg8YY/GDBw9awuGwTSqFdr2n"
+    "kYGHUpjuNQyDx44cUYtyWgvteLTuPr3n/eXX3UyiwEEFTney2FVNBUvcewGg0On6tKi0"
+    "8uVMfe3s7t3YEYj8qU0Pr/hvT2vsm9w0+voedo9Nf3nw/Q/+tuHP7w0hkZgGZ9w0VXKV"
+    "QN5LBPrt1IVzXXp3byOE8EtpulOm6T/cf+CTRTsP/zvTABB9dP+djWvWHbcWl40Vu62p"
+    "0Ok+ay9bSlp+8a5Q38836sHtxzt/tu2uS8UuKoiIZa5SaekVS4scFS2FTtddhU73j/Id"
+    "jtqtW43izPHpmG//1vyfWCMilq0aLMp/iXQ+nunl2bhYDjnkkEMOOeSQw0LjKwbZl8H5"
+    "v+eVAAAAAElFtkSuQmCC"
+)
 
-    page = st.radio(
-        "Navigate to",
-        PAGES,
-        key="nav_page",
-        label_visibility="collapsed",
+_cur_page = st.session_state.get("nav_page", "Home")
+
+def _rail_item(icon: str, label: str, page_name: str) -> str:
+    active = (page_name == _cur_page)
+    url    = "?nav=" + page_name.replace(" ", "%20")
+    if active:
+        return (
+            f'<div class="ud-nav-item-active">'
+            f'<div class="ud-nav-icon">{icon}</div>'
+            f'<span class="ud-nav-label">{label}</span>'
+            f'</div>'
+        )
+    return (
+        f'<a href="{url}" target="_self" class="ud-nav-item">'
+        f'<div class="ud-nav-icon">{icon}</div>'
+        f'<span class="ud-nav-label">{label}</span>'
+        f'</a>'
     )
 
-    st.divider()
-    st.caption(
-        "Disclaimer: For educational and research support only. "
-        "Not investment advice."
-    )
+_rail_html = "\n".join([
+    _rail_item("H", "Home",               "Home"),
+    _rail_item("S", "Screener",           "Screener"),
+    _rail_item("C", "Company Detail",     "Company Detail"),
+    _rail_item("P", "Portfolio Simulator","Portfolio Simulator"),
+    _rail_item("A", "About",              "About"),
+])
+
+st.markdown(f"""
+<div class="ud-nav-rail">
+  <div style="padding:14px 6px 6px 6px;display:flex;align-items:center">
+    <div class="ud-nav-icon" style="overflow:hidden;border-radius:8px;background:#1e3a6b">
+      <img src="data:image/png;base64,{_LOGO_B64}" style="width:40px;height:40px;object-fit:cover;display:block" alt="Underdawg">
+    </div>
+    <span class="ud-nav-text-hide" style="font-size:14px;font-weight:700;color:#e8edf5;margin-left:8px">Underdawg</span>
+  </div>
+  <div style="padding:0 6px 4px 6px">
+    <span class="ud-nav-text-hide" style="font-size:10px;color:#64748b">Equity Research · MSDSBA</span>
+  </div>
+  <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:2px 0 4px 0">
+  {_rail_html}
+  <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:4px 0">
+  <div style="padding:4px 6px 8px 6px">
+    <span class="ud-nav-text-hide" style="font-size:10px;color:#64748b">Educational use only. Not investment advice.</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+page = st.session_state.get("nav_page", "Home")
 
 df, data_status = _load_sample(False)
 
@@ -428,6 +640,326 @@ def signal_badge_html(signal: str) -> str:
     )
 
 
+# ── Watchlist + Research Notes helpers ───────────────────────────────────────
+
+_WL_PATH    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "watchlist.csv")
+_NOTES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "research_notes.csv")
+
+_WL_COLS = [
+    "ticker", "company_name", "added_at", "source_page", "model_year", "signal",
+    "current_valuation_gap_pct", "quality_score", "filing_risk_score",
+    "latest_10q_risk_score", "filing_risk_trend", "research_status", "user_note",
+]
+_WL_STATUSES = ["New", "Reviewing", "Simulated", "Rejected", "Added to Paper Portfolio"]
+
+_NOTES_COLS = ["ticker", "updated_at", "thesis", "risks", "questions", "decision", "checklist_json"]
+_NOTES_DECISIONS = ["No decision", "Continue researching", "Reject", "Simulate", "Add to paper portfolio"]
+_CHECKLIST_ITEMS = [
+    "Reviewed business model",
+    "Reviewed revenue growth",
+    "Reviewed margins",
+    "Reviewed debt / liquidity",
+    "Reviewed annual 10-K risk",
+    "Reviewed latest 10-Q update",
+    "Compared peers",
+    "Ran historical replay",
+    "Wrote thesis",
+]
+
+
+def _load_watchlist() -> pd.DataFrame:
+    if not os.path.exists(_WL_PATH):
+        return pd.DataFrame(columns=_WL_COLS)
+    try:
+        df = pd.read_csv(_WL_PATH, dtype=str).fillna("")
+        for c in _WL_COLS:
+            if c not in df.columns:
+                df[c] = ""
+        return df[_WL_COLS]
+    except Exception:
+        return pd.DataFrame(columns=_WL_COLS)
+
+
+def _save_watchlist(wl: pd.DataFrame) -> None:
+    try:
+        wl.to_csv(_WL_PATH, index=False)
+    except Exception:
+        pass
+
+
+def _wl_in_watchlist(ticker: str) -> bool:
+    return ticker.upper() in _load_watchlist()["ticker"].str.upper().values
+
+
+def _wl_add(ticker: str, *, company_name="", source_page="", model_year="",
+             signal="", val_gap=None, quality=None, risk=None,
+             q10_risk=None, q10_trend="") -> bool:
+    wl = _load_watchlist()
+    if ticker.upper() in wl["ticker"].str.upper().values:
+        return False
+    def _s(v):
+        return str(v) if (v is not None and pd.notna(v)) else ""
+    new_row = {
+        "ticker":                    ticker.upper(),
+        "company_name":              company_name,
+        "added_at":                  pd.Timestamp.now().isoformat(timespec="seconds"),
+        "source_page":               source_page,
+        "model_year":                str(model_year) if model_year else "",
+        "signal":                    str(signal) if signal else "",
+        "current_valuation_gap_pct": _s(val_gap),
+        "quality_score":             _s(quality),
+        "filing_risk_score":         _s(risk),
+        "latest_10q_risk_score":     _s(q10_risk),
+        "filing_risk_trend":         str(q10_trend) if q10_trend else "",
+        "research_status":           "New",
+        "user_note":                 "",
+    }
+    _save_watchlist(pd.concat([wl, pd.DataFrame([new_row])], ignore_index=True))
+    return True
+
+
+def _wl_remove(ticker: str) -> None:
+    wl = _load_watchlist()
+    _save_watchlist(wl[wl["ticker"].str.upper() != ticker.upper()])
+
+
+def _wl_update(ticker: str, *, status: str = None, note: str = None) -> None:
+    wl = _load_watchlist()
+    mask = wl["ticker"].str.upper() == ticker.upper()
+    if status is not None:
+        wl.loc[mask, "research_status"] = status
+    if note is not None:
+        wl.loc[mask, "user_note"] = note
+    _save_watchlist(wl)
+
+
+def _load_notes() -> pd.DataFrame:
+    if not os.path.exists(_NOTES_PATH):
+        return pd.DataFrame(columns=_NOTES_COLS)
+    try:
+        df = pd.read_csv(_NOTES_PATH, dtype=str).fillna("")
+        for c in _NOTES_COLS:
+            if c not in df.columns:
+                df[c] = ""
+        return df
+    except Exception:
+        return pd.DataFrame(columns=_NOTES_COLS)
+
+
+def _get_note(ticker: str) -> dict:
+    notes = _load_notes()
+    match = notes[notes["ticker"].str.upper() == ticker.upper()]
+    return match.iloc[0].to_dict() if len(match) > 0 else {}
+
+
+def _save_note(ticker: str, thesis: str, risks: str, questions: str,
+               decision: str, checklist: dict) -> None:
+    import json
+    notes = _load_notes()
+    mask = notes["ticker"].str.upper() == ticker.upper()
+    row = {
+        "ticker":         ticker.upper(),
+        "updated_at":     pd.Timestamp.now().isoformat(timespec="seconds"),
+        "thesis":         thesis or "",
+        "risks":          risks or "",
+        "questions":      questions or "",
+        "decision":       decision or "No decision",
+        "checklist_json": json.dumps(checklist),
+    }
+    if mask.any():
+        for col, val in row.items():
+            notes.loc[mask, col] = val
+    else:
+        notes = pd.concat([notes, pd.DataFrame([row])], ignore_index=True)
+    try:
+        notes.to_csv(_NOTES_PATH, index=False)
+    except Exception:
+        pass
+
+
+def generate_company_explanation(row: dict) -> list:
+    """Return plain-English research bullets for a company row. No buy/sell language."""
+    bullets = []
+
+    vgap = row.get("Valuation_Gap_Pct") or row.get("valuation_gap_pct") or row.get("current_valuation_gap_pct")
+    if vgap is not None:
+        try:
+            vgap_f = float(vgap)
+            if not pd.isna(vgap_f):
+                if vgap_f > 30:
+                    bullets.append(
+                        f"Valuation gap is **+{vgap_f:.1f}%** — the model estimates fair value well above "
+                        "the market cap in the model year. This may deserve further review, though the gap "
+                        "could reflect model uncertainty or sector dynamics."
+                    )
+                elif vgap_f > 5:
+                    bullets.append(
+                        f"Valuation gap is **+{vgap_f:.1f}%** — the model estimates fair value modestly "
+                        "above the market cap in the model year."
+                    )
+                elif vgap_f >= -10:
+                    bullets.append(
+                        f"Valuation gap is **{vgap_f:.1f}%** — the model estimates fair value roughly "
+                        "in line with the market cap in the model year."
+                    )
+                else:
+                    bullets.append(
+                        f"Valuation gap is **{vgap_f:.1f}%** — the model estimates fair value below "
+                        "the market cap in the model year."
+                    )
+        except (TypeError, ValueError):
+            pass
+
+    qs = row.get("Quality_Score") or row.get("quality_score")
+    if qs is not None:
+        try:
+            qs_f = float(qs)
+            if not pd.isna(qs_f):
+                if qs_f >= 70:
+                    bullets.append(f"Quality score is **{qs_f:.0f}/100** (strong) — the company showed strong profitability and low leverage in the model year.")
+                elif qs_f >= 40:
+                    bullets.append(f"Quality score is **{qs_f:.0f}/100** (moderate) — fundamentals were adequate but not exceptional in the model year.")
+                else:
+                    bullets.append(f"Quality score is **{qs_f:.0f}/100** (weak) — the company showed weakness in profitability or leverage in the model year.")
+        except (TypeError, ValueError):
+            pass
+
+    risk = (row.get("report_risk_score_real") or row.get("Report_Risk_Score")
+            or row.get("report_risk_score") or row.get("filing_risk_score"))
+    if risk is not None:
+        try:
+            risk_f = float(risk)
+            if not pd.isna(risk_f):
+                if risk_f < 35:
+                    bullets.append(f"Annual filing risk is **{risk_f:.0f}/100** (low) — the 10-K contained relatively few risk-escalation terms relative to peers.")
+                elif risk_f < 65:
+                    bullets.append(f"Annual filing risk is **{risk_f:.0f}/100** (moderate) — the 10-K contained a typical level of risk language.")
+                else:
+                    bullets.append(f"Annual filing risk is **{risk_f:.0f}/100** (elevated) — risk language in this 10-K should be reviewed carefully.")
+        except (TypeError, ValueError):
+            pass
+
+    trend   = row.get("filing_risk_trend") or row.get("latest_10q_risk_trend")
+    q_score = row.get("latest_10q_risk_score")
+    if trend and str(trend) not in ("", "nan", "None", "Unavailable"):
+        q_s = f" (10-Q score: {float(q_score):.0f}/100)" if (q_score and pd.notna(q_score)) else ""
+        ts  = str(trend)
+        if "Increasing" in ts:
+            bullets.append(f"Latest 10-Q risk trend is **increasing**{q_s} — risk language has escalated since the annual filing. Supplemental context only; does not change the model signal.")
+        elif "Decreasing" in ts:
+            bullets.append(f"Latest 10-Q risk trend is **decreasing**{q_s} — risk language is lower than the annual baseline.")
+        elif "Stable" in ts:
+            bullets.append(f"Latest 10-Q risk trend is **stable**{q_s} — no meaningful change in risk language since the annual filing.")
+
+    freshness = row.get("market_freshness")
+    if freshness and str(freshness) not in ("", "nan", "None"):
+        fs = str(freshness).lower()
+        if "stale" in fs:
+            bullets.append("Current market data is **stale** — current market context may change the valuation picture significantly.")
+        elif "missing" in fs:
+            bullets.append("Current market data is **missing** — the valuation gap shown uses model-year data only.")
+
+    qflag = str(row.get("output_quality_flag") or "")
+    wtext = str(row.get("output_warning_text") or "")
+    if qflag not in ("ok", "", "nan", "None") and wtext not in ("", "nan", "None"):
+        first_warn = wtext.split("|")[0].strip()
+        if first_warn:
+            bullets.append(f"**Data quality note:** {first_warn} — interpret this signal with additional caution.")
+
+    calib   = row.get("final_signal_calibrated")
+    orig    = row.get("Final_Signal") or row.get("final_signal")
+    radj    = row.get("final_signal_calibrated_risk_adjusted")
+    _show   = (radj if (radj and str(radj) not in ("nan", "None", ""))
+               else (calib if (calib and str(calib) not in ("nan", "None", "")) else orig))
+    if _show and str(_show) not in ("nan", "None", ""):
+        sig = str(_show)
+        if "High-priority" in sig:
+            bullets.append("This company appears on the **high-priority shortlist** because valuation gap and quality score both meet the model's top-tier thresholds in the model year.")
+        elif "Research candidate" in sig:
+            bullets.append("This company appears as a **research candidate** — model signals meet the threshold for further investigation. Additional due diligence is needed.")
+        elif "Fairly valued" in sig or "neutral" in sig.lower():
+            bullets.append("The model sees this company as **fairly valued** relative to the model-year market — no strong directional signal.")
+        elif "value trap" in sig.lower():
+            bullets.append("The model flags a **possible value trap** — the low apparent valuation may reflect underlying fundamental weakness.")
+        elif "overvalued" in sig.lower():
+            bullets.append("The model signal suggests **potential overvaluation** relative to model-year fundamentals.")
+
+    if not bullets:
+        bullets.append("Key metrics are missing or incomplete — no explanation can be generated.")
+    return bullets
+
+
+def _render_explanation(row: dict) -> None:
+    """Render the explainability panel inline."""
+    st.markdown('<div class="section-header">Why this company appears here</div>', unsafe_allow_html=True)
+    st.caption("Research context only. Not investment advice. Valuation gap is a model-year estimate, not a forward return prediction.")
+    for b in generate_company_explanation(row):
+        st.markdown(f"- {b}")
+
+
+def _render_research_notes_tab(ticker: str) -> None:
+    """Render Research Notes tab content for a given ticker."""
+    import json
+    note = _get_note(ticker)
+    updated_at = note.get("updated_at", "")
+    if updated_at:
+        st.caption(f"Last updated: {updated_at}")
+
+    st.markdown('<div class="section-header">Research Notes</div>', unsafe_allow_html=True)
+    thesis    = st.text_area("Thesis", value=note.get("thesis", ""), height=100,
+                              placeholder="What is the investment thesis for further researching this company?",
+                              key=f"notes_thesis_{ticker}")
+    risks     = st.text_area("Key Risks", value=note.get("risks", ""), height=80,
+                              placeholder="What are the key risks to the thesis?",
+                              key=f"notes_risks_{ticker}")
+    questions = st.text_area("Questions to Research", value=note.get("questions", ""), height=80,
+                              placeholder="What open questions need to be answered?",
+                              key=f"notes_questions_{ticker}")
+    decision  = st.selectbox(
+        "Research Decision", _NOTES_DECISIONS,
+        index=_NOTES_DECISIONS.index(note.get("decision", "No decision"))
+              if note.get("decision", "") in _NOTES_DECISIONS else 0,
+        key=f"notes_decision_{ticker}",
+    )
+    st.markdown("**Research Checklist**")
+    try:
+        saved_checks = json.loads(note.get("checklist_json", "{}") or "{}")
+    except Exception:
+        saved_checks = {}
+    checks = {item: st.checkbox(item, value=bool(saved_checks.get(item, False)),
+                                 key=f"chk_{ticker}_{item.replace(' ','_').replace('/','_')}")
+              for item in _CHECKLIST_ITEMS}
+    if st.button("Save Notes", type="primary", key=f"save_notes_{ticker}"):
+        _save_note(ticker, thesis, risks, questions, decision, checks)
+        st.success("Notes saved.")
+        st.rerun()
+    st.caption("Notes are saved locally to research_notes.csv. Educational research only — not investment advice.")
+
+
+def _render_watchlist_button(ticker: str, row: dict, source_page: str) -> None:
+    """Render Add-to-Watchlist or Already-in-Watchlist button."""
+    already = _wl_in_watchlist(ticker)
+    if already:
+        st.button("✓ In Watchlist", key=f"wl_already_{ticker}_{source_page}", disabled=True)
+    else:
+        st.caption("Save this company to continue research later.")
+        if st.button("★ Add to Watchlist", key=f"wl_add_{ticker}_{source_page}", type="primary"):
+            _wl_add(
+                ticker,
+                company_name=str(row.get("Company_Name") or row.get("company_name") or ticker),
+                source_page=source_page,
+                model_year=str(row.get("year") or row.get("model_year") or ""),
+                signal=str(row.get("final_signal_display") or row.get("Final_Signal") or row.get("final_signal") or ""),
+                val_gap=row.get("Valuation_Gap_Pct") or row.get("valuation_gap_pct"),
+                quality=row.get("Quality_Score") or row.get("quality_score"),
+                risk=row.get("report_risk_score_real") or row.get("Report_Risk_Score") or row.get("report_risk_score"),
+                q10_risk=row.get("latest_10q_risk_score"),
+                q10_trend=str(row.get("filing_risk_trend") or ""),
+            )
+            st.success(f"Added {ticker} to Watchlist.")
+            st.rerun()
+
+
 # ════════════════════════════════════════════════════════════════════════════
 #  PAGE 1 -- HOME
 # ════════════════════════════════════════════════════════════════════════════
@@ -444,23 +976,12 @@ def page_home() -> None:
     </div>
     """, unsafe_allow_html=True)
 
-    cta1, cta2, _spacer = st.columns([1, 1, 3])
-    with cta1:
-        if st.button("Open Screener", type="primary", use_container_width=True, key="home_cta_screener"):
-            st.session_state.pending_nav_page = "Screener"
-            st.rerun()
-    with cta2:
-        if st.button("Historical Replay", use_container_width=True, key="home_cta_replay"):
-            st.session_state.pending_nav_page = "Portfolio Simulator"
-            st.rerun()
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Preview cards
+    # ── Integrated CTA preview cards ──────────────────────────────────────────
     all_mo, _ = _load_all_model_outputs()
-    prev1, prev2 = st.columns(2)
+    card1, card2 = st.columns(2)
 
-    with prev1:
+    with card1:
+        _scr_inner = ""
         if all_mo is not None:
             try:
                 _prev_df = all_mo.copy()
@@ -469,91 +990,116 @@ def page_home() -> None:
                     "High-priority research candidate": 0, "Research candidate": 0,
                     "Fairly valued / neutral": 1, "Possible value trap": 2, "Potentially overvalued": 3,
                 }
-                if "final_signal_calibrated_risk_adjusted" in _prev_df.columns:
-                    _sig_col = "final_signal_calibrated_risk_adjusted"
-                elif "final_signal_calibrated" in _prev_df.columns:
-                    _sig_col = "final_signal_calibrated"
-                else:
-                    _sig_col = "final_signal"
+                _sig_col = (
+                    "final_signal_calibrated_risk_adjusted"
+                    if "final_signal_calibrated_risk_adjusted" in _prev_df.columns
+                    else ("final_signal_calibrated" if "final_signal_calibrated" in _prev_df.columns
+                          else "final_signal")
+                )
                 _prev_df["_pri"] = _prev_df[_sig_col].fillna(_prev_df["final_signal"]).map(_sig_pri).fillna(99)
                 _prev_df = _prev_df.sort_values(["_pri", "valuation_gap_pct"], ascending=[True, False])
-                _top  = _prev_df.iloc[0]
-                _sig  = str(_top.get(_sig_col) or _top.get("final_signal") or "")
+                _top5 = _prev_df.head(5)
+                _max_g_raw = _top5["valuation_gap_pct"].abs().max()
+                _max_g = float(_max_g_raw) if pd.notna(_max_g_raw) and float(_max_g_raw) > 0 else 100.0
+                _bars = ""
+                for _, _row in _top5.iterrows():
+                    _g = _row.get("valuation_gap_pct")
+                    _t = str(_row.get("ticker", ""))[:5]
+                    if pd.notna(_g):
+                        _w = min(max(abs(float(_g)) / _max_g * 80, 6), 90)
+                        _bc = "#2563eb" if float(_g) > 0 else "#ef4444"
+                        _bars += (
+                            f'<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
+                            f'<span style="font-size:10px;color:#64748b;width:34px;flex-shrink:0;font-family:monospace">{_t}</span>'
+                            f'<div style="background:{_bc};height:7px;border-radius:3px;width:{_w:.0f}%"></div>'
+                            f'<span style="font-size:10px;color:#334155">{float(_g):+.0f}%</span>'
+                            f'</div>'
+                        )
+                _top = _prev_df.iloc[0]
+                _top_ticker = str(_top.get("ticker", ""))
                 _gap  = _top.get("valuation_gap_pct")
                 _qs   = _top.get("quality_score")
                 _rrs  = _top.get("report_risk_score_real") if pd.notna(_top.get("report_risk_score_real", None)) else _top.get("report_risk_score")
-                _yr   = int(_top.get("year", 0))
-                _qf   = str(_top.get("output_quality_flag") or "ok")
-                _gap_str = f"{float(_gap):+.1f}%" if pd.notna(_gap) else "N/A"
-                _qs_str  = f"{float(_qs):.0f}/100" if pd.notna(_qs) else "N/A"
-                _rrs_str = f"{float(_rrs):.0f}/100" if pd.notna(_rrs) else "N/A"
-                st.markdown(f"""
-                <div class="preview-card">
-                  <div class="pc-title">Screener Preview — Top Research Candidate</div>
-                  <div class="pc-row">
-                    <b>{_top.get('ticker','')}</b> &nbsp;·&nbsp; {str(_top.get('company_name',''))[:28]}<br>
-                    Signal: <b>{_sig}</b><br>
-                    Valuation gap: <b>{_gap_str}</b> &nbsp;·&nbsp; Quality: <b>{_qs_str}</b><br>
-                    Filing risk: <b>{_rrs_str}</b> &nbsp;·&nbsp; Data: <b>{_qf}</b> &nbsp;·&nbsp; Year: <b>{_yr}</b>
-                  </div>
-                  <div class="pc-cap">Live model output · calibrated + filing-risk adjusted signals</div>
-                </div>
-                """, unsafe_allow_html=True)
+                _top_gap_s = f"{float(_gap):+.1f}%" if pd.notna(_gap) else "N/A"
+                _top_qs_s  = f"{float(_qs):.0f}/100" if pd.notna(_qs) else "N/A"
+                _top_rrs_s = f"{float(_rrs):.0f}/100" if pd.notna(_rrs) else "N/A"
+                _scr_inner = (
+                    '<div style="font-size:10px;color:#64748b;margin-bottom:5px;font-weight:600;'
+                    'text-transform:uppercase;letter-spacing:0.5px">Valuation gap · top candidates</div>'
+                    + _bars
+                    + f'<div style="margin-top:8px;padding-top:8px;border-top:1px solid #e2e8f0">'
+                    f'<span style="font-size:12px;font-weight:700;color:#1a2744">{_top_ticker}</span>'
+                    f'<span style="font-size:11px;color:#64748b"> · Gap: <b>{_top_gap_s}</b>'
+                    f' · Quality: <b>{_top_qs_s}</b> · Risk: <b>{_top_rrs_s}</b></span></div>'
+                )
             except Exception:
-                st.markdown('<div class="preview-card"><div class="pc-title">Screener Preview</div><div class="pc-row">Open Screener to see ranked research candidates.</div></div>', unsafe_allow_html=True)
+                _scr_inner = '<div style="font-size:12px;color:#64748b">Open Screener to see ranked research candidates.</div>'
         else:
-            st.markdown('<div class="preview-card"><div class="pc-title">Screener Preview</div><div class="pc-row">Run the model pipeline to see live research candidates here.</div><div class="pc-cap">python3 market_cap_utils.py · calibrate_signals.py · filing_risk_utils.py</div></div>', unsafe_allow_html=True)
+            _scr_inner = (
+                '<div style="font-size:12px;color:#64748b">Run the model pipeline to see live candidates here.'
+                '<br><span style="font-size:11px;color:#94a3b8">market_cap_utils.py · calibrate_signals.py</span></div>'
+            )
+        st.markdown(
+            '<div class="cta-card"><div class="cta-card-body">'
+            '<div class="cta-eyebrow">Research Screener</div>'
+            '<div class="cta-title">Open Screener</div>'
+            '<div class="cta-subtitle">Rank companies by valuation, quality, and filing risk.</div>'
+            f'<div class="cta-preview-box">{_scr_inner}</div>'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+        if st.button("Open Research Screener →", key="home_cta_screener", use_container_width=True):
+            st.session_state.pending_nav_page = "Screener"
+            st.rerun()
 
-    with prev2:
+    with card2:
+        _rpl_inner = ""
         if all_mo is not None:
             try:
                 avail_yrs = sorted(all_mo["year"].dropna().astype(int).unique())
                 n_cos = all_mo["ticker"].nunique()
                 yr_range = f"{avail_yrs[0]}–{avail_yrs[-1]}" if len(avail_yrs) > 1 else str(avail_yrs[0])
-                st.markdown(f"""
-                <div class="preview-card">
-                  <div class="pc-title">Historical Replay Preview</div>
-                  <div class="pc-row">
-                    Signal years: <b>{yr_range}</b> &nbsp;·&nbsp; Companies: <b>{n_cos}</b><br>
-                    Benchmarks: <b>SPY, QQQ, Cash baseline</b><br>
-                    Mode: <b>Model-backed</b> when year has fundamentals<br>
-                    Entry: <b>Exact date</b> &nbsp;·&nbsp; Holding: <b>1 month – 10 years</b>
-                  </div>
-                  <div class="pc-cap">Daily prices via yfinance · equal-weight simulation</div>
-                </div>
-                """, unsafe_allow_html=True)
+                _rpl_inner = (
+                    '<div style="font-size:10px;color:#64748b;margin-bottom:5px;font-weight:600;'
+                    'text-transform:uppercase;letter-spacing:0.5px">Signal coverage</div>'
+                    '<svg width="100%" height="32" viewBox="0 0 240 32" '
+                    'style="display:block;margin-bottom:8px;overflow:visible">'
+                    '<defs><linearGradient id="sparkgrad" x1="0" y1="0" x2="1" y2="0">'
+                    '<stop offset="0%" stop-color="#bfdbfe"/>'
+                    '<stop offset="100%" stop-color="#2563eb"/></linearGradient></defs>'
+                    '<polyline points="0,28 48,22 96,16 144,10 192,6 240,2" fill="none" '
+                    'stroke="url(#sparkgrad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>'
+                    '<circle cx="240" cy="2" r="3.5" fill="#2563eb"/>'
+                    '</svg>'
+                    f'<table style="font-size:11px;color:#334155;border-spacing:0 2px;width:100%">'
+                    f'<tr><td style="color:#64748b;padding-right:10px">Years</td><td><b>{yr_range}</b></td>'
+                    f'<td style="color:#64748b;padding-left:12px;padding-right:6px">Companies</td><td><b>{n_cos}</b></td></tr>'
+                    f'<tr><td style="color:#64748b">Benchmarks</td><td colspan="3"><b>SPY · QQQ · Cash</b></td></tr>'
+                    f'<tr><td style="color:#64748b">Holding</td><td colspan="3"><b>1 month – 10 years · exact-date entry</b></td></tr>'
+                    f'</table>'
+                )
             except Exception:
-                st.markdown('<div class="preview-card"><div class="pc-title">Historical Replay Preview</div><div class="pc-row">Replay a model shortlist over any historical date range.</div></div>', unsafe_allow_html=True)
+                _rpl_inner = '<div style="font-size:12px;color:#64748b">Replay a model shortlist over any historical date range.</div>'
         else:
-            st.markdown('<div class="preview-card"><div class="pc-title">Historical Replay Preview</div><div class="pc-row">Replay a model shortlist over any historical date range using daily yfinance prices.</div><div class="pc-cap">Holding periods: 1 month to 10 years · exact-date entry</div></div>', unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Feature cards
-    st.markdown("#### What you can do with Underdawg")
-    fc1, fc2, fc3 = st.columns(3)
-    _FEAT = [
-        ("Research Shortlist", "Screener",
-         "Screen 29 companies by valuation gap, quality score, and filing risk. Export filtered results as CSV."),
-        ("Portfolio Simulator", "Portfolio Simulator",
-         "Track research ideas with simulated trades. Monitor P/L, compare to benchmarks — no real money."),
-        ("Historical Replay", "Portfolio Simulator",
-         "Pick an exact start date and holding period. See how a model shortlist would have fared using daily prices."),
-    ]
-    for col, (title, dest, desc) in zip([fc1, fc2, fc3], _FEAT):
-        with col:
-            st.markdown(
-                f'<div class="product-card">'
-                f'<div style="font-size:14px;font-weight:700;color:#1a2744;margin-bottom:6px">{title}</div>'
-                f'<div style="font-size:12px;color:#475569;line-height:1.5;margin-bottom:12px">{desc}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
+            _rpl_inner = (
+                '<div style="font-size:12px;color:#64748b">Replay a model shortlist over any historical date range using daily prices.'
+                '<br><span style="font-size:11px;color:#94a3b8">Holding: 1 month to 10 years · exact-date entry</span></div>'
             )
-            if st.button(f"Open {title} →", key=f"home_feat_{title.replace(' ','_')}", use_container_width=True):
-                st.session_state.pending_nav_page = dest
-                st.rerun()
+        st.markdown(
+            '<div class="cta-card"><div class="cta-card-body">'
+            '<div class="cta-eyebrow">Portfolio Simulator</div>'
+            '<div class="cta-title">Try Historical Replay</div>'
+            '<div class="cta-subtitle">Pick a date and replay model-backed signals against a benchmark.</div>'
+            f'<div class="cta-preview-box">{_rpl_inner}</div>'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+        if st.button("Run Historical Replay →", key="home_cta_replay", use_container_width=True):
+            st.session_state.pending_nav_page = "Portfolio Simulator"
+            st.session_state["portfolio_tab"] = "Historical Replay"
+            st.rerun()
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div style="height:20px"></div>', unsafe_allow_html=True)
 
     # Disclaimer strip
     st.markdown("""
@@ -599,6 +1145,49 @@ def page_screener(df: pd.DataFrame) -> None:
     else:
         st.info("Model outputs unavailable. Using demo fallback data.")
 
+    # Merge 10-Q risk update if available (supplemental — does not alter model signals)
+    _q10_df, _upd_df = _load_10q_data()
+    if use_xbrl and _upd_df is not None and len(_upd_df) > 0:
+        try:
+            _upd_slim = _upd_df[["ticker", "latest_10q_risk_score", "filing_risk_trend",
+                                   "filing_risk_delta", "latest_10q_filing_date"]].copy()
+            _upd_slim["ticker"] = _upd_slim["ticker"].str.upper()
+            _upd_slim = _upd_slim.rename(columns={"ticker": "Ticker"})
+            active_df = active_df.merge(_upd_slim, on="Ticker", how="left")
+        except Exception:
+            for _c in ["latest_10q_risk_score", "filing_risk_trend", "filing_risk_delta", "latest_10q_filing_date"]:
+                active_df[_c] = None
+
+    # Current valuation gap using live market cap vs model fair value
+    if use_xbrl and "Estimated_Fair_Value" in active_df.columns:
+        _cmask = (
+            active_df.get("current_market_cap", pd.Series(dtype=float)).notna()
+            & (active_df.get("current_market_cap", pd.Series(dtype=float)) > 0)
+            & active_df["Estimated_Fair_Value"].notna()
+        )
+        active_df["current_valuation_gap_pct"] = np.nan
+        if _cmask.any():
+            active_df.loc[_cmask, "current_valuation_gap_pct"] = (
+                (active_df.loc[_cmask, "Estimated_Fair_Value"] * 1e9
+                 - active_df.loc[_cmask, "current_market_cap"])
+                / active_df.loc[_cmask, "current_market_cap"] * 100
+            ).round(1)
+        active_df["valuation_gap_source"] = np.where(_cmask, "current_mkt", "model_yr")
+
+    # Per-ticker market freshness flag (fresh ≤5h, stale >5h, missing)
+    if "last_updated" in active_df.columns:
+        def _fresh_flag(ts):
+            try:
+                age_h = (pd.Timestamp.now() - pd.to_datetime(ts)).total_seconds() / 3600
+                return "fresh" if age_h <= 5 else "stale"
+            except Exception:
+                return "unknown"
+        active_df["market_freshness"] = active_df["last_updated"].apply(
+            lambda x: _fresh_flag(x) if pd.notna(x) else "missing"
+        )
+    else:
+        active_df["market_freshness"] = "missing"
+
     # Status metric cards
     if use_xbrl:
         _all_mo, _ = _load_all_model_outputs()
@@ -610,16 +1199,58 @@ def page_screener(df: pd.DataFrame) -> None:
                        if "output_quality_flag" in active_df.columns else 0
         _has_risk_m  = "report_risk_available" in active_df.columns and active_df["report_risk_available"].any()
         _risk_ct     = int(active_df["report_risk_available"].sum()) if _has_risk_m else 0
-        _has_calib_m = "final_signal_calibrated" in active_df.columns and active_df["final_signal_calibrated"].notna().any()
+        _has_10q_m   = "latest_10q_risk_score" in active_df.columns and active_df["latest_10q_risk_score"].notna().any()
+        _10q_ct      = int(active_df["latest_10q_risk_score"].notna().sum()) if _has_10q_m else 0
+        _fresh_ct    = int((active_df.get("market_freshness", pd.Series()) == "fresh").sum())
+        _cm_any      = _fresh_ct > 0 or int((active_df.get("market_freshness", pd.Series()) == "stale").sum()) > 0
 
         sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
-        sc1.metric("Companies",          _n_companies)
-        sc2.metric("Company-year rows",  _n_rows_all)
-        sc3.metric("Years",              _yr_range)
-        sc4.metric("Flagged rows",       _n_flagged)
-        sc5.metric("Filing risk scores", _risk_ct if _has_risk_m else "—")
-        sc6.metric("Calibrated signals", "Active" if _has_calib_m else "—")
-        st.markdown("<br>", unsafe_allow_html=True)
+        sc1.metric("Companies",         _n_companies)
+        sc2.metric("Model year range",  _yr_range)
+        sc3.metric("10-K risk scores",  _risk_ct if _has_risk_m else "—",
+                   help="Annual 10-K filing risk scores used in model-backed signals.")
+        sc4.metric("10-Q risk scores",  _10q_ct if _has_10q_m else "—",
+                   help="Latest quarterly 10-Q risk update (supplemental, does not alter model signal).")
+        sc5.metric("Mkt data fresh",    _fresh_ct if _cm_any else "—",
+                   help="Tickers with current market data fetched within the last 5 hours.")
+        sc6.metric("Flagged rows",      _n_flagged)
+
+        # Market snapshot freshness banner + refresh
+        _mts_label   = "Current market unavailable"
+        _mts_color   = "#64748b"
+        _cm_available = "last_updated" in active_df.columns and active_df["last_updated"].notna().any()
+        if _cm_available:
+            try:
+                _mts = pd.to_datetime(active_df["last_updated"].dropna().iloc[0])
+                _age_h = (pd.Timestamp.now() - _mts).total_seconds() / 3600
+                _ts_short = str(_mts)[:16]
+                if _age_h <= 5:
+                    _mts_label = f"Market snapshot fresh — as of {_ts_short}"
+                    _mts_color = "#16a34a"
+                else:
+                    _mts_label = f"Market snapshot stale — as of {_ts_short} ({_age_h:.0f}h ago)"
+                    _mts_color = "#d97706"
+            except Exception:
+                pass
+        _fb1, _fb2 = st.columns([4, 1])
+        with _fb1:
+            st.markdown(
+                f'<div style="font-size:12px;color:{_mts_color};margin:6px 0 2px 0">● {_mts_label}</div>'
+                '<div style="font-size:11px;color:#94a3b8">Fundamentals and filing risk update when '
+                'companies file reports. Market price context updates via yfinance snapshot.</div>',
+                unsafe_allow_html=True,
+            )
+        with _fb2:
+            if st.button("Refresh market snapshot", key="scr_refresh_mkt", use_container_width=True):
+                try:
+                    _tkrs = active_df["Ticker"].dropna().tolist()
+                    with st.spinner("Fetching current prices …"):
+                        fetch_current_market_data(_tkrs, save=True)
+                    _load_supplementary.clear()
+                    st.rerun()
+                except Exception as _re:
+                    st.warning(f"Refresh failed: {_re}")
+        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
     # Signal toggles
     hide_flagged = False
@@ -669,41 +1300,99 @@ def page_screener(df: pd.DataFrame) -> None:
                     active_df["final_signal_calibrated_risk_adjusted"].fillna(active_df["Final_Signal"])
                 )
 
-    # Filter panel
-    st.markdown("**Filters**")
-    fp1, fp2, fp3 = st.columns(3)
-    with fp1:
-        ticker_search = st.text_input("Search ticker / company", value="", key="flt_search", placeholder="e.g. AAPL")
-    with fp2:
-        sig_opts = list(SIGNAL_ORDER)
-        if use_xbrl and not hide_flagged:
-            sig_opts = sig_opts + ["Needs review"]
-        sel_sigs = st.multiselect("Signal", sig_opts, default=sig_opts, key="flt_sig")
-    with fp3:
-        sectors = sorted(active_df["Sector"].dropna().unique())
-        sel_sec = st.multiselect("Sector", sectors, default=sectors, key="flt_sec")
+    _has_current_mc = (
+        "current_market_cap" in active_df.columns
+        and active_df["current_market_cap"].notna().any()
+        and "current_valuation_gap_pct" in active_df.columns
+    )
+    _has_10q_data = (
+        "latest_10q_risk_score" in active_df.columns
+        and active_df["latest_10q_risk_score"].notna().any()
+    )
+    use_current_gap = False
+    show_10q_risk = False
+    if use_xbrl and (_has_current_mc or _has_10q_data):
+        tgl4, tgl5, _ = st.columns(3)
+        if _has_current_mc:
+            with tgl4:
+                use_current_gap = st.toggle(
+                    "Use current market cap gap",
+                    value=True,
+                    key="screener_use_current_gap",
+                    help="Show valuation gap using live market cap vs model fair value instead of model-year cap.",
+                )
+        if _has_10q_data:
+            with tgl5:
+                show_10q_risk = st.toggle(
+                    "Show 10-Q risk update",
+                    value=True,
+                    key="screener_show_10q",
+                    help="Show latest quarterly 10-Q risk score alongside annual 10-K filing risk.",
+                )
 
-    fp4, fp5, fp6 = st.columns(3)
-    with fp4:
-        q_vals = active_df["Quality_Score"].dropna()
-        min_q  = int(q_vals.min()) if len(q_vals) > 0 else 0
-        max_q  = int(q_vals.max()) if len(q_vals) > 0 else 100
-        q_range = st.slider("Min quality score", min_q, max_q, min_q, key="flt_q")
-    with fp5:
-        _risk_col = ("report_risk_score_real"
-                     if "report_risk_score_real" in active_df.columns
-                     and active_df["report_risk_score_real"].notna().any()
-                     else "Report_Risk_Score")
-        if _risk_col in active_df.columns:
-            rsk_max_filter = st.slider("Max filing risk score", 0, 100, 100, key="flt_rsk")
-        else:
-            rsk_max_filter = 100
-    with fp6:
-        sort_by = st.selectbox(
-            "Sort by",
-            ["Research priority", "Valuation gap", "Quality score", "Filing risk", "Market cap", "Year"],
-            key="flt_sort",
-        )
+    # Filter panel — collapsed by default
+    with st.expander("Filters and sorting", expanded=False):
+        fp1, fp2, fp3 = st.columns(3)
+        with fp1:
+            ticker_search = st.text_input("Search ticker / company", value="", key="flt_search", placeholder="e.g. AAPL")
+        with fp2:
+            sig_opts = list(SIGNAL_ORDER)
+            if use_xbrl and not hide_flagged:
+                sig_opts = sig_opts + ["Needs review"]
+            sel_sigs = st.multiselect("Signal", sig_opts, default=sig_opts, key="flt_sig")
+        with fp3:
+            sectors = sorted(active_df["Sector"].dropna().unique())
+            sel_sec = st.multiselect("Sector", sectors, default=sectors, key="flt_sec")
+
+        fp4, fp5, fp6 = st.columns(3)
+        with fp4:
+            q_vals = active_df["Quality_Score"].dropna()
+            min_q  = int(q_vals.min()) if len(q_vals) > 0 else 0
+            max_q  = int(q_vals.max()) if len(q_vals) > 0 else 100
+            q_range = st.slider("Min quality score", min_q, max_q, min_q, key="flt_q")
+        with fp5:
+            _risk_col = ("report_risk_score_real"
+                         if "report_risk_score_real" in active_df.columns
+                         and active_df["report_risk_score_real"].notna().any()
+                         else "Report_Risk_Score")
+            if _risk_col in active_df.columns:
+                rsk_max_filter = st.slider("Max filing risk score", 0, 100, 100, key="flt_rsk")
+            else:
+                rsk_max_filter = 100
+        with fp6:
+            sort_by = st.selectbox(
+                "Sort by",
+                ["Research priority", "Valuation gap", "Current gap", "Quality score", "Filing risk", "10-Q Risk", "Market cap", "Year"],
+                key="flt_sort",
+            )
+
+        sel_freshness: list = []
+        sel_trend: list = []
+        _has_freshness_col = "market_freshness" in active_df.columns
+        _has_trend_col = "filing_risk_trend" in active_df.columns and active_df["filing_risk_trend"].notna().any()
+        if use_xbrl and (_has_freshness_col or _has_trend_col):
+            fp7, fp8, _ = st.columns(3)
+            if _has_freshness_col:
+                with fp7:
+                    _fresh_opts = sorted(active_df["market_freshness"].dropna().unique().tolist())
+                    sel_freshness = st.multiselect(
+                        "Market data freshness",
+                        _fresh_opts,
+                        default=_fresh_opts,
+                        key="flt_freshness",
+                        help="Filter by how recent the live market data is.",
+                    )
+            if _has_trend_col:
+                with fp8:
+                    _trend_opts = ["Increasing", "Stable", "Decreasing", "Unavailable"]
+                    _trend_avail = [t for t in _trend_opts if t in active_df["filing_risk_trend"].values or t == "Unavailable"]
+                    sel_trend = st.multiselect(
+                        "Filing risk trend",
+                        _trend_avail,
+                        default=_trend_avail,
+                        key="flt_trend",
+                        help="Filter by 10-Q vs 10-K risk trend direction.",
+                    )
 
     # Apply filters
     fdf = active_df[
@@ -723,17 +1412,35 @@ def page_screener(df: pd.DataFrame) -> None:
     if _risk_col in fdf.columns:
         fdf = fdf[fdf[_risk_col].fillna(0) <= rsk_max_filter].copy()
 
+    if sel_freshness and "market_freshness" in fdf.columns:
+        fdf = fdf[fdf["market_freshness"].isin(sel_freshness)].copy()
+
+    if sel_trend and "filing_risk_trend" in fdf.columns:
+        _trend_mask = fdf["filing_risk_trend"].isin([t for t in sel_trend if t != "Unavailable"])
+        if "Unavailable" in sel_trend:
+            _trend_mask = _trend_mask | fdf["filing_risk_trend"].isna()
+        fdf = fdf[_trend_mask].copy()
+
     # Sort
     if sort_by == "Research priority":
         fdf["_pri"] = fdf["Final_Signal"].map({s: i for i, s in enumerate(SIGNAL_ORDER)})
         fdf = fdf.sort_values("_pri").drop(columns="_pri")
     elif sort_by == "Valuation gap":
-        fdf = fdf.sort_values("Valuation_Gap_Pct", ascending=False)
+        if use_current_gap and "current_valuation_gap_pct" in fdf.columns:
+            fdf = fdf.sort_values("current_valuation_gap_pct", ascending=False)
+        else:
+            fdf = fdf.sort_values("Valuation_Gap_Pct", ascending=False)
+    elif sort_by == "Current gap":
+        _gap_sort_col = "current_valuation_gap_pct" if "current_valuation_gap_pct" in fdf.columns else "Valuation_Gap_Pct"
+        fdf = fdf.sort_values(_gap_sort_col, ascending=False)
     elif sort_by == "Quality score":
         fdf = fdf.sort_values("Quality_Score", ascending=False)
     elif sort_by == "Filing risk":
         if _risk_col in fdf.columns:
             fdf = fdf.sort_values(_risk_col, ascending=False)
+    elif sort_by == "10-Q Risk":
+        if "latest_10q_risk_score" in fdf.columns:
+            fdf = fdf.sort_values("latest_10q_risk_score", ascending=False)
     elif sort_by == "Market cap":
         fdf = fdf.sort_values("Market_Cap_B", ascending=False)
     elif sort_by == "Year":
@@ -760,21 +1467,31 @@ def page_screener(df: pd.DataFrame) -> None:
     if use_xbrl:
         desired = ["Ticker", "Company_Name", "year", "Market_Cap_B", "Estimated_Fair_Value",
                    "Valuation_Gap_Pct", "Quality_Score", "Final_Signal"]
+        # Current market cap and gap: only when toggle is on and data is available
+        if use_current_gap and "current_valuation_gap_pct" in fdf.columns and fdf["current_valuation_gap_pct"].notna().any():
+            desired.insert(desired.index("Valuation_Gap_Pct") + 1, "current_valuation_gap_pct")
+            if "current_market_cap" in fdf.columns:
+                desired.insert(desired.index("Market_Cap_B") + 1, "current_market_cap")
         if use_calibrated and "valuation_bucket_year" in fdf.columns:
             desired.insert(desired.index("Final_Signal") + 1, "valuation_bucket_year")
         if _risk_col in fdf.columns:
             desired.append(_risk_col)
         if "output_quality_flag" in fdf.columns:
             desired.append("output_quality_flag")
+        if show_10q_risk and "latest_10q_risk_score" in fdf.columns and fdf["latest_10q_risk_score"].notna().any():
+            desired += ["latest_10q_risk_score", "filing_risk_trend"]
         if "current_price" in fdf.columns:
             desired += ["current_price", "daily_change_pct"]
         col_rename = {
-            "Ticker": "Ticker", "Company_Name": "Company", "year": "Year",
-            "Market_Cap_B": "Actual MC (B)", "Estimated_Fair_Value": "Est. Value (B)",
-            "Valuation_Gap_Pct": "Val. Gap %", "Quality_Score": "Quality",
+            "Ticker": "Ticker", "Company_Name": "Company", "year": "Model Yr",
+            "Market_Cap_B": "Model MC (B)", "current_market_cap": "Live MC (B)",
+            "Estimated_Fair_Value": "Est. Value (B)",
+            "Valuation_Gap_Pct": "Model Gap %", "current_valuation_gap_pct": "Current Gap %",
+            "Quality_Score": "Quality",
             "Final_Signal": "Signal", "valuation_bucket_year": "Value Bucket",
             "output_quality_flag": "Data Quality",
             "report_risk_score_real": "Filing Risk", "Report_Risk_Score": "Filing Risk",
+            "latest_10q_risk_score": "10-Q Risk", "filing_risk_trend": "Risk Trend",
             "current_price": "Live Price", "daily_change_pct": "Daily Chg %",
         }
     else:
@@ -795,12 +1512,15 @@ def page_screener(df: pd.DataFrame) -> None:
     def _fmt_pct(x):
         return f"{x:+.1f}%" if pd.notna(x) else "N/A"
 
-    if "Actual MC (B)"       in display.columns: display["Actual MC (B)"]       = display["Actual MC (B)"].map(_fmt_b)
+    if "Model MC (B)"        in display.columns: display["Model MC (B)"]        = display["Model MC (B)"].map(_fmt_b)
+    if "Live MC (B)"         in display.columns: display["Live MC (B)"]         = display["Live MC (B)"].map(lambda x: f"${x/1e9:.1f}B" if pd.notna(x) and x > 0 else "N/A")
     if "Est. Value (B)"      in display.columns: display["Est. Value (B)"]      = display["Est. Value (B)"].map(_fmt_b)
-    if "Val. Gap %"          in display.columns: display["Val. Gap %"]          = display["Val. Gap %"].map(_fmt_pct)
+    if "Model Gap %"         in display.columns: display["Model Gap %"]         = display["Model Gap %"].map(_fmt_pct)
+    if "Current Gap %"       in display.columns: display["Current Gap %"]       = display["Current Gap %"].map(_fmt_pct)
     if "Daily Chg %"         in display.columns: display["Daily Chg %"]         = display["Daily Chg %"].map(_fmt_pct)
     if "Live Price"          in display.columns: display["Live Price"]          = display["Live Price"].map(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
     if "Filing Risk"         in display.columns: display["Filing Risk"]         = display["Filing Risk"].map(lambda x: f"{x:.0f}/100" if pd.notna(x) else "—")
+    if "10-Q Risk"           in display.columns: display["10-Q Risk"]           = display["10-Q Risk"].map(lambda x: f"{x:.0f}/100" if pd.notna(x) else "—")
     if "Market Price ($)"    in display.columns: display["Market Price ($)"]    = display["Market Price ($)"].map("${:.2f}".format)
     if "Est. Fair Value ($)" in display.columns: display["Est. Fair Value ($)"] = display["Est. Fair Value ($)"].map("${:.2f}".format)
     if "Valuation Gap (%)"   in display.columns: display["Valuation Gap (%)"]   = display["Valuation Gap (%)"].map(_fmt_pct)
@@ -819,7 +1539,13 @@ def page_screener(df: pd.DataFrame) -> None:
         if raw < -10: return "color:#e74c3c; font-weight:600"
         return "color:#f39c12; font-weight:600"
 
-    gap_col = "Val. Gap %" if use_xbrl else "Valuation Gap (%)"
+    # Prefer current gap column for styling when toggle is on and data available
+    if use_xbrl and use_current_gap and "Current Gap %" in display.columns:
+        gap_col = "Current Gap %"
+    elif use_xbrl:
+        gap_col = "Model Gap %"
+    else:
+        gap_col = "Valuation Gap (%)"
     try:
         styler = display.style
         styler = _safe_map(styler, _style_signal, "Signal")
@@ -840,51 +1566,67 @@ def page_screener(df: pd.DataFrame) -> None:
     )
 
     if use_xbrl:
-        st.caption(
-            "Actual MC and Est. Value in billions. Filing Risk = 0–100 (higher = more risk language in 10-K). "
-            "Data Quality: ok / needs_review."
-        )
+        _cap_parts = [
+            "Research candidates based on latest available fundamentals, filing risk, and market snapshot.",
+            "Model Yr = year of fundamentals used. Model Gap % = (Est.Value – Model MC) / Model MC.",
+        ]
+        if use_current_gap and "current_valuation_gap_pct" in fdf.columns and fdf["current_valuation_gap_pct"].notna().any():
+            _cap_parts.append("Current Gap % = (Est.Value – Live MC) / Live MC using current market cap (research signal only).")
+        if show_10q_risk and "latest_10q_risk_score" in fdf.columns and fdf["latest_10q_risk_score"].notna().any():
+            _cap_parts.append("10-Q Risk = latest quarterly filing risk score (supplemental; does not alter model signal).")
+        _cap_parts.append("Filing Risk 0–100 (higher = more risk language in annual 10-K).")
+        _cap_parts.append("Valuation gap is a research signal, not proof of undervaluation.")
+        st.caption("  ".join(_cap_parts))
     else:
         st.caption("Valuation Gap = (Est. Fair Value - Market Price) / Market Price × 100.")
 
     st.divider()
 
-    # Company selection + preview panel
-    c1, c2, c3, _ = st.columns([3, 1, 1, 1])
-    ticker_opts = fdf["Ticker"].tolist()
-    with c1:
-        default_idx = (
-            ticker_opts.index(st.session_state.selected_ticker)
-            if st.session_state.selected_ticker in ticker_opts else 0
-        )
-        chosen = st.selectbox(
-            "Select a company to inspect:",
-            ticker_opts if ticker_opts else ["(no results)"],
-            index=default_idx if ticker_opts else 0,
-            format_func=lambda t: (
-                f"{t} — {fdf[fdf['Ticker']==t]['Company_Name'].values[0]}"
-                if ticker_opts and t in fdf["Ticker"].values else t
-            ),
-            key="screener_select",
-        )
-    with c2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("View Details", type="primary", use_container_width=True, key="screener_view_detail") and ticker_opts:
-            st.session_state.selected_ticker  = chosen
-            st.session_state.detail_source    = "xbrl" if use_xbrl else "sample"
-            st.session_state.pending_nav_page = "Company Detail"
-            st.rerun()
-    with c3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Add to Simulator", use_container_width=True, key="screener_add_sim") and ticker_opts:
-            st.session_state.paper_ticker_prefill = chosen
-            st.session_state.paper_source_prefill = "xbrl" if use_xbrl else "sample"
-            st.session_state.pending_nav_page = "Portfolio Simulator"
-            st.rerun()
+    # ── Company selection + preview panel ────────────────────────────────────
+    visible_tickers = fdf["Ticker"].dropna().astype(str).tolist()
 
-    # Selected company quick preview
-    if ticker_opts and chosen in active_df["Ticker"].values:
-        row = active_df[active_df["Ticker"] == chosen].iloc[0]
+    if not visible_tickers:
+        st.warning("No companies match the current filters.")
+    else:
+        # Validate session state — reset to first visible if stale
+        if st.session_state.get("screener_selected_ticker") not in visible_tickers:
+            st.session_state["screener_selected_ticker"] = visible_tickers[0]
+
+        # Build label map: ticker → "TICKER — Company Name"
+        _co_map = fdf.set_index("Ticker")["Company_Name"].to_dict()
+        _ticker_to_label = {t: f"{t} — {_co_map.get(t, t)}" for t in visible_tickers}
+        _label_to_ticker = {v: k for k, v in _ticker_to_label.items()}
+        visible_labels   = [_ticker_to_label[t] for t in visible_tickers]
+
+        c1, c2, c3 = st.columns([4, 1, 1])
+        with c1:
+            sel_label = st.selectbox(
+                "Select a company to inspect:",
+                options=visible_labels,
+                index=visible_tickers.index(st.session_state["screener_selected_ticker"]),
+                key="screener_company_sel",
+            )
+        chosen = _label_to_ticker[sel_label]
+        # Sync both canonical keys immediately so buttons and downstream pages agree
+        st.session_state["screener_selected_ticker"] = chosen
+        st.session_state.selected_ticker             = chosen
+
+        with c2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("View Details", type="primary", use_container_width=True, key="screener_view_detail"):
+                st.session_state.detail_source    = "xbrl" if use_xbrl else "sample"
+                st.session_state.pending_nav_page = "Company Detail"
+                st.rerun()
+        with c3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Add to Simulator", use_container_width=True, key="screener_add_sim"):
+                st.session_state.paper_ticker_prefill = chosen
+                st.session_state.paper_source_prefill = "xbrl" if use_xbrl else "sample"
+                st.session_state.pending_nav_page = "Portfolio Simulator"
+                st.rerun()
+
+        # Always derive row from filtered dataset so it matches what the user sees
+        row = fdf[fdf["Ticker"] == chosen].iloc[0]
         _sig_disp = str(row.get("final_signal_display") or row.get("Final_Signal") or "")
         _risk_adj = str(row.get("final_signal_calibrated_risk_adjusted") or "") if use_risk_adjusted else ""
         _show_sig = _risk_adj if (_risk_adj and _risk_adj != "nan") else _sig_disp
@@ -924,6 +1666,13 @@ def page_screener(df: pd.DataFrame) -> None:
         st.markdown(signal_badge_html(_show_sig), unsafe_allow_html=True)
         if _risk_adj and _risk_adj not in ("", "nan") and _risk_adj != _sig_disp:
             st.caption(f"Risk-adjusted signal. Original calibrated: {_sig_disp}")
+
+        _scr_wl_col, _ = st.columns([1, 3])
+        with _scr_wl_col:
+            _render_watchlist_button(chosen, row.to_dict(), "Screener")
+
+        with st.expander("Why this company appears here"):
+            _render_explanation(row.to_dict())
 
     st.divider()
 
@@ -1094,7 +1843,7 @@ def _xbrl_company_detail(mo: pd.DataFrame) -> None:
         )
 
     # Action buttons
-    ab1, ab2, _ = st.columns([1, 1, 3])
+    ab1, ab2, ab3, _ = st.columns([1, 1, 1, 2])
     with ab1:
         if st.button("Open in Simulator", key="xbrl_open_simulator"):
             st.session_state.paper_ticker_prefill = chosen
@@ -1105,12 +1854,14 @@ def _xbrl_company_detail(mo: pd.DataFrame) -> None:
         if st.button("Back to Screener", key="xbrl_back_screener"):
             st.session_state.pending_nav_page = "Screener"
             st.rerun()
+    with ab3:
+        _render_watchlist_button(chosen, row.to_dict(), "Company Detail")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Tabs
-    tab_ov, tab_val, tab_risk, tab_profile = st.tabs(
-        ["Overview", "Valuation", "Filing Risk", "Financial Profile"]
+    tab_ov, tab_val, tab_risk, tab_profile, tab_notes = st.tabs(
+        ["Overview", "Valuation", "Filing Risk", "Financial Profile", "Research Notes"]
     )
 
     # ── Overview ──────────────────────────────────────────────────────────────
@@ -1163,6 +1914,8 @@ def _xbrl_company_detail(mo: pd.DataFrame) -> None:
         else:
             st.info("Current market data not available. Run `python3 market_cap_utils.py` to fetch.")
 
+        st.divider()
+        _render_explanation(row.to_dict())
         st.divider()
         st.warning(
             "**Limitations:** Historical data only (2010–2024). "
@@ -1263,6 +2016,57 @@ def _xbrl_company_detail(mo: pd.DataFrame) -> None:
             else:
                 st.info("Run `python3 filing_risk_utils.py` to compute real SEC 10-K risk scores.")
 
+        # ── Latest 10-Q risk update (supplemental) ───────────────────────────
+        st.markdown('<div class="section-header" style="margin-top:18px">Latest 10-Q Risk Update</div>',
+                    unsafe_allow_html=True)
+        _cd_ticker = str(row.get("Ticker", "")).upper()
+        _q10_df_cd, _upd_df_cd = _load_10q_data()
+        _q10_row = None
+        if _upd_df_cd is not None and len(_upd_df_cd) > 0:
+            _q_match = _upd_df_cd[_upd_df_cd["ticker"].str.upper() == _cd_ticker]
+            if len(_q_match) > 0:
+                _q10_row = _q_match.iloc[0]
+        if _q10_row is not None:
+            _q_score   = _q10_row.get("latest_10q_risk_score")
+            _q_trend   = str(_q10_row.get("filing_risk_trend") or "Unavailable")
+            _q_delta   = _q10_row.get("filing_risk_delta")
+            _q_date    = str(_q10_row.get("latest_10q_filing_date") or "N/A")
+            _ann_score = _q10_row.get("annual_10k_risk_score")
+            _ann_date  = str(_q10_row.get("annual_10k_filing_date") or "N/A")
+            _ann_yr    = _q10_row.get("latest_model_year")
+            _q_warn    = str(_q10_row.get("current_risk_warning_text") or "")
+
+            st.markdown("**Annual 10-K Baseline** (used in model signal)")
+            ak1, ak2, ak3, _ = st.columns(4)
+            ak1.metric("Annual 10-K Risk",   f"{float(_ann_score):.0f}/100" if pd.notna(_ann_score) else "—",
+                       help="Annual 10-K filing risk score used in the model-backed signal.")
+            ak2.metric("10-K Filed",         _ann_date[:10] if len(_ann_date) > 4 else "N/A")
+            ak3.metric("Model Year",         str(int(_ann_yr)) if pd.notna(_ann_yr) else "N/A")
+
+            st.markdown("**Latest 10-Q Update** (supplemental)")
+            _trend_colors = {"Increasing": "🔴", "Decreasing": "🟢", "Stable": "🟡", "Unavailable": "⚪"}
+            qq1, qq2, qq3, qq4 = st.columns(4)
+            qq1.metric("10-Q Risk Score",  f"{float(_q_score):.0f}/100" if pd.notna(_q_score) else "—",
+                       help="Latest quarterly 10-Q filing risk score.")
+            qq2.metric("vs Annual 10-K",   f"{float(_q_delta):+.0f}" if pd.notna(_q_delta) else "—",
+                       help="Difference between 10-Q risk and annual 10-K risk (positive = risk increased).")
+            qq3.metric("Risk Trend",       f"{_trend_colors.get(_q_trend,'⚪')} {_q_trend}")
+            qq4.metric("10-Q Filed",       _q_date[:10] if len(_q_date) > 4 else "N/A")
+
+            if _q_warn:
+                st.warning(_q_warn)
+            st.caption(
+                "10-K risk is the **annual baseline** used in the model-backed signal. "
+                "10-Q risk is a **recent quarterly update** indicating whether risk language "
+                "has increased or decreased since the annual filing. "
+                "10-Q risk does not alter the model signal — it is supplemental context only."
+            )
+        else:
+            st.info(
+                "10-Q risk data not available for this company. "
+                "Run `python3 filing_risk_utils.py --10q` to generate latest quarterly risk scores."
+            )
+
     # ── Financial Profile ─────────────────────────────────────────────────────
     with tab_profile:
         st.markdown('<div class="section-header">Profile Radar</div>', unsafe_allow_html=True)
@@ -1306,6 +2110,10 @@ def _xbrl_company_detail(mo: pd.DataFrame) -> None:
             "All axes normalized 0–100 for visualization only."
         )
 
+    # ── Research Notes ────────────────────────────────────────────────────────
+    with tab_notes:
+        _render_research_notes_tab(chosen)
+
 
 def _sample_company_detail(df: pd.DataFrame) -> None:
     """Full company detail page for sample data."""
@@ -1342,11 +2150,15 @@ def _sample_company_detail(df: pd.DataFrame) -> None:
             unsafe_allow_html=True,
         )
 
-    if st.button("Open in Portfolio Simulator", key="sample_open_simulator"):
-        st.session_state.paper_ticker_prefill = chosen
-        st.session_state.paper_source_prefill = "sample"
-        st.session_state.pending_nav_page = "Portfolio Simulator"
-        st.rerun()
+    _btn1, _btn2 = st.columns([1, 3])
+    with _btn1:
+        if st.button("Open in Portfolio Simulator", key="sample_open_simulator"):
+            st.session_state.paper_ticker_prefill = chosen
+            st.session_state.paper_source_prefill = "sample"
+            st.session_state.pending_nav_page = "Portfolio Simulator"
+            st.rerun()
+    with _btn2:
+        _render_watchlist_button(chosen, row.to_dict(), "Company Detail (sample)")
 
     st.divider()
 
@@ -1476,6 +2288,13 @@ def _sample_company_detail(df: pd.DataFrame) -> None:
     )
     st.plotly_chart(fig_radar, use_container_width=True)
     st.caption("Each axis is normalized 0-100 relative to model scale.")
+
+    st.divider()
+    _render_explanation(row.to_dict())
+
+    st.divider()
+    with st.expander("Research Notes"):
+        _render_research_notes_tab(chosen)
 
 
 def page_company_detail(df: pd.DataFrame) -> None:
@@ -1908,6 +2727,65 @@ def page_model_diagnostics() -> None:
     g2.metric("Current Market Tickers (ok)", cm_rows)
     g3.metric("model_metrics.csv",           "exists" if os.path.exists(MODEL_METRICS_PATH) else "missing")
     g4.metric("feature_importance.csv",      "exists" if os.path.exists(FEATURE_IMP_PATH)   else "missing")
+
+    # ── Current Data Coverage ─────────────────────────────────────────────────
+    st.markdown('<div class="section-header">Current Data Coverage</div>', unsafe_allow_html=True)
+    st.caption("Live market snapshot and 10-Q filing risk coverage as of the last fetch.")
+
+    _cd_cm_df, _cd_cm_msg = load_current_market_data()
+    _cd_10q_df, _cd_upd_df = _load_10q_data()
+
+    if _cd_cm_df is not None and len(_cd_cm_df) > 0:
+        _cd_last = _cd_cm_df["last_updated"].max() if "last_updated" in _cd_cm_df.columns else None
+        try:
+            _cd_age_h = (pd.Timestamp.now() - pd.to_datetime(_cd_last)).total_seconds() / 3600 if _cd_last else None
+        except Exception:
+            _cd_age_h = None
+
+        def _cd_freshness(ts):
+            try:
+                age_h = (pd.Timestamp.now() - pd.to_datetime(ts)).total_seconds() / 3600
+                return "fresh" if age_h <= 5 else "stale"
+            except Exception:
+                return "unknown"
+
+        _cd_cm_df["_freshness"] = _cd_cm_df["last_updated"].apply(
+            lambda x: _cd_freshness(x) if pd.notna(x) else "missing"
+        )
+        _cd_n_fresh   = int((_cd_cm_df["_freshness"] == "fresh").sum())
+        _cd_n_stale   = int((_cd_cm_df["_freshness"] == "stale").sum())
+        _cd_n_missing = int((_cd_cm_df["_freshness"] == "missing").sum())
+        _cd_n_ok      = int(((_cd_cm_df.get("data_quality_flag", pd.Series())) == "ok").sum())
+
+        _cd_age_str = f"{_cd_age_h:.1f}h ago" if _cd_age_h is not None else "unknown"
+        cd1, cd2, cd3, cd4 = st.columns(4)
+        cd1.metric("Market Tickers (ok)",   _cd_n_ok,      help="Tickers with valid price data.")
+        cd2.metric("Fresh (≤5h)",           _cd_n_fresh,   help="Tickers fetched within the last 5 hours.")
+        cd3.metric("Stale (>5h)",           _cd_n_stale,   help="Tickers with data older than 5 hours.")
+        cd4.metric("Last fetch",            str(_cd_last)[:16] if _cd_last else "—",
+                   delta=_cd_age_str if _cd_age_h is not None else None,
+                   delta_color="inverse")
+    else:
+        st.info(f"No current market data. {_cd_cm_msg}  Run `python3 market_cap_utils.py --current` to fetch.")
+
+    if _cd_upd_df is not None and len(_cd_upd_df) > 0:
+        _cd_trend_cts = _cd_upd_df["filing_risk_trend"].value_counts().to_dict() if "filing_risk_trend" in _cd_upd_df.columns else {}
+        _cd_10q_n     = int(_cd_upd_df["latest_10q_risk_score"].notna().sum()) if "latest_10q_risk_score" in _cd_upd_df.columns else 0
+        cd5, cd6, cd7, cd8 = st.columns(4)
+        cd5.metric("10-Q Tickers",       len(_cd_upd_df))
+        cd6.metric("10-Q Scores (ok)",   _cd_10q_n)
+        cd7.metric("Increasing risk",    _cd_trend_cts.get("Increasing", 0))
+        cd8.metric("Decreasing risk",    _cd_trend_cts.get("Decreasing", 0))
+        st.caption(
+            f"Filing risk trend: Stable={_cd_trend_cts.get('Stable',0)}, "
+            f"Increasing={_cd_trend_cts.get('Increasing',0)}, "
+            f"Decreasing={_cd_trend_cts.get('Decreasing',0)}, "
+            f"Unavailable={_cd_trend_cts.get('Unavailable',0)}."
+        )
+    else:
+        st.info("No 10-Q risk data. Run `python3 filing_risk_utils.py --10q` to generate quarterly risk scores.")
+
+    st.divider()
 
     # ── Model Output Quality section ──────────────────────────────────────────
     reviewed_path = MODEL_OUTPUTS_REVIEWED_PATH
@@ -2616,6 +3494,93 @@ def page_model_diagnostics() -> None:
 #  PAGE — PAPER PORTFOLIO SIMULATOR
 # ════════════════════════════════════════════════════════════════════════════
 
+def _pp_watchlist_tab() -> None:
+    """Render the Watchlist tab inside Portfolio Simulator."""
+    st.markdown("### Research Watchlist")
+    st.caption(
+        "Track companies under research review. Add companies from Company Detail or the Screener. "
+        "Saved locally to watchlist.csv."
+    )
+    wl = _load_watchlist()
+    if wl.empty:
+        st.info("Your watchlist is empty. Add companies from the Screener or Company Detail.")
+        return
+
+    # ── Compact summary table ─────────────────────────────────────────────────
+    st.markdown(f"**{len(wl)} companies tracked**")
+
+    _disp = wl[["ticker", "company_name", "research_status", "signal", "added_at"]].copy()
+    _disp["added_at"] = _disp["added_at"].astype(str).str[:10]
+    _disp.columns = ["Ticker", "Company", "Status", "Signal", "Added"]
+    st.dataframe(_disp, use_container_width=True, hide_index=True)
+
+    # ── Company selector → detail panel ──────────────────────────────────────
+    ticker_labels = [
+        f"{str(r['ticker'])}  —  {str(r['company_name'] or r['ticker'])}"
+        for _, r in wl.iterrows()
+    ]
+    sel_label = st.selectbox(
+        "Inspect company",
+        ticker_labels,
+        key="wl_inspect_sel",
+    )
+    sel_idx   = ticker_labels.index(sel_label)
+    wl_row    = wl.iloc[sel_idx]
+    t         = str(wl_row.get("ticker", ""))
+    co        = str(wl_row.get("company_name", "") or t)
+    status    = str(wl_row.get("research_status", "New"))
+    signal    = str(wl_row.get("signal", "—") or "—")
+    vgap      = wl_row.get("current_valuation_gap_pct", "")
+    qs        = wl_row.get("quality_score", "")
+    risk      = wl_row.get("filing_risk_score", "")
+    q10       = wl_row.get("latest_10q_risk_score", "")
+    trend     = str(wl_row.get("filing_risk_trend", "—") or "—")
+    added     = str(wl_row.get("added_at", ""))[:10]
+    note      = str(wl_row.get("user_note", "") or "")
+
+    st.markdown(f"#### {t} — {co}")
+    st.caption(f"Added {added} · Research status: **{status}**")
+
+    wm1, wm2, wm3, wm4, wm5, wm6 = st.columns(6)
+    wm1.metric("Signal",      signal)
+    wm2.metric("Val. Gap",    f"{float(vgap):+.1f}%" if vgap else "—")
+    wm3.metric("Quality",     f"{float(qs):.0f}/100" if qs else "—")
+    wm4.metric("Filing Risk", f"{float(risk):.0f}/100" if risk else "—")
+    wm5.metric("10-Q Risk",   f"{float(q10):.0f}/100" if q10 else "—")
+    wm6.metric("10-Q Trend",  trend)
+
+    new_status = st.selectbox(
+        "Update research status", _WL_STATUSES,
+        index=_WL_STATUSES.index(status) if status in _WL_STATUSES else 0,
+        key=f"wl_status_{t}",
+    )
+    new_note = st.text_input("Research note", value=note, key=f"wl_note_{t}",
+                             placeholder="Brief research note…")
+
+    wa1, wa2, wa3 = st.columns(3)
+    with wa1:
+        if st.button("Save", key=f"wl_save_{t}", type="primary"):
+            _wl_update(t, status=new_status, note=new_note)
+            st.success(f"{t} updated.")
+            st.rerun()
+    with wa2:
+        if st.button("View Company Detail", key=f"wl_detail_{t}"):
+            st.session_state.selected_ticker  = t
+            st.session_state.detail_source    = "xbrl"
+            st.session_state.pending_nav_page = "Company Detail"
+            st.rerun()
+    with wa3:
+        if st.button("Remove from Watchlist", key=f"wl_remove_{t}"):
+            _wl_remove(t)
+            st.warning(f"{t} removed from watchlist.")
+            st.rerun()
+
+    st.divider()
+    csv_bytes = wl.to_csv(index=False).encode("utf-8")
+    st.download_button("Download Watchlist CSV", data=csv_bytes,
+                       file_name="watchlist.csv", mime="text/csv", key="wl_dl_btn")
+
+
 def page_portfolio_simulator(df: pd.DataFrame) -> None:
     """Portfolio Simulator — two-tab page: Live Paper Portfolio + Historical Replay."""
     st.markdown("## Portfolio Simulator")
@@ -2631,13 +3596,70 @@ Historical replay uses simplified assumptions and does not predict future result
 </div>
 """, unsafe_allow_html=True)
 
-    tab_live, tab_replay = st.tabs(["Live Paper Portfolio", "Historical Replay"])
+    tab_live, tab_replay, tab_wl = st.tabs(["Live Paper Portfolio", "Historical Replay", "Watchlist"])
 
     with tab_live:
         _pp_live_tab(df)
 
     with tab_replay:
         _pp_replay_tab(df)
+
+    with tab_wl:
+        _pp_watchlist_tab()
+
+
+def _compute_model_weights_replay(top_df, tickers: list) -> dict:
+    """
+    Signal-based weights using only replay-year fundamentals — no future returns.
+    Formula: 0.45×valuation_rank + 0.35×quality_component + 0.20×low_risk_component
+    Clips to min 5%, max 40% per position. Returns {ticker: weight_pct} summing to ~100.
+    """
+    n = len(tickers)
+    if n == 0:
+        return {}
+    if n == 1:
+        return {tickers[0]: 100.0}
+
+    vgaps, qualities, risks = [], [], []
+    for t in tickers:
+        rows = top_df[top_df["ticker"] == t] if top_df is not None and not top_df.empty else pd.DataFrame()
+        if rows.empty:
+            vgaps.append(None); qualities.append(None); risks.append(None)
+            continue
+        r = rows.iloc[0]
+        vg = r.get("valuation_gap_pct")
+        vgaps.append(float(vg) if pd.notna(vg) else None)
+        qs = r.get("quality_score")
+        qualities.append(float(qs) if pd.notna(qs) else None)
+        rk = r.get("report_risk_score_real")
+        if rk is None or (isinstance(rk, float) and np.isnan(rk)):
+            rk = r.get("report_risk_score")
+        risks.append(float(rk) if pd.notna(rk) else None)
+
+    # Percentile-rank valuation gaps (higher gap → higher rank → higher weight)
+    valid_vg = [(i, v) for i, v in enumerate(vgaps) if v is not None]
+    vg_ranks = [0.5] * n
+    if len(valid_vg) > 1:
+        sorted_vg = sorted(valid_vg, key=lambda x: x[1])
+        for rank_pos, (orig_i, _) in enumerate(sorted_vg):
+            vg_ranks[orig_i] = (rank_pos + 1) / len(sorted_vg)
+
+    scores = {}
+    for i, t in enumerate(tickers):
+        val_c  = vg_ranks[i]
+        qual_c = max(0.0, min(1.0, qualities[i] / 100)) if qualities[i] is not None else 0.5
+        risk_c = max(0.0, min(1.0, 1 - risks[i] / 100)) if risks[i] is not None else 0.5
+        scores[t] = 0.45 * val_c + 0.35 * qual_c + 0.20 * risk_c
+
+    total  = sum(scores.values()) or 1.0
+    raw_w  = {t: scores[t] / total * 100 for t in tickers}
+    clipped = {t: max(5.0, min(40.0, w)) for t, w in raw_w.items()}
+    ct     = sum(clipped.values()) or 1.0
+    weights = {t: round(clipped[t] / ct * 100, 1) for t in tickers}
+    diff   = round(100.0 - sum(weights.values()), 1)
+    if tickers and diff != 0:
+        weights[tickers[0]] = round(weights[tickers[0]] + diff, 1)
+    return weights
 
 
 def _pp_replay_tab(df: pd.DataFrame) -> None:
@@ -2835,6 +3857,7 @@ def _pp_replay_tab(df: pd.DataFrame) -> None:
         exclude_nr = False
 
     # ── Ticker selection ──────────────────────────────────────────────────────
+    top_df = None  # set inside model_backed path; used by allocation section
     if model_backed:
         year_df = all_mo[all_mo["year"] == signal_year].copy()
         if exclude_nr:
@@ -2957,6 +3980,133 @@ def _pp_replay_tab(df: pd.DataFrame) -> None:
     start_date_str = str(start_ts.date())
     end_date_str   = str(display_exit_ts.date())
 
+    # ── Portfolio Allocation ──────────────────────────────────────────────────
+    st.divider()
+    st.markdown("#### Portfolio Allocation")
+
+    _n_sel = len(selected_tickers)
+    _eq_w  = {t: round(100.0 / max(_n_sel, 1), 1) for t in selected_tickers}
+    # Fix equal-weight rounding to ensure sum = 100
+    _eq_diff = round(100.0 - sum(_eq_w.values()), 1)
+    if selected_tickers and _eq_diff != 0:
+        _eq_w[selected_tickers[0]] = round(_eq_w[selected_tickers[0]] + _eq_diff, 1)
+
+    _alloc_opts = ["Equal weight"]
+    if model_backed and top_df is not None:
+        _alloc_opts.append("Model-recommended weight")
+    _alloc_opts.append("Custom weight")
+
+    alloc_method = st.radio(
+        "Allocation method",
+        _alloc_opts,
+        horizontal=True,
+        key="hr_alloc_method",
+    )
+
+    # Compute display weights
+    if alloc_method == "Equal weight":
+        _preview_weights = dict(_eq_w)
+
+    elif alloc_method == "Model-recommended weight":
+        _preview_weights = _compute_model_weights_replay(top_df, selected_tickers)
+        st.caption(
+            "Model-recommended weights use valuation gap, quality score, and filing-risk signals "
+            "available at the replay signal year — no future returns used. "
+            "Min 5% / max 40% per position. These are research allocations, not optimal portfolios."
+        )
+        if _n_sel > 1 and st.button("Copy to custom weights", key="hr_cw_copy_model"):
+            for _tk, _mw in _preview_weights.items():
+                st.session_state[f"hr_cw_{_tk}"] = _mw
+            st.info("Copied. Switch to **Custom weight** above to adjust.")
+
+    else:  # Custom weight
+        _preview_weights = _eq_w.copy()  # starting point; overridden by widgets below
+
+    if alloc_method == "Custom weight":
+        st.caption(
+            f"Enter allocation percentages (must total 100%). "
+            f"Starting capital: ${initial_capital:,.0f}"
+        )
+        _ncw = min(_n_sel, 4)
+        _wcols = st.columns(_ncw)
+        _custom_w = {}
+        for _ci, _tk in enumerate(selected_tickers):
+            with _wcols[_ci % _ncw]:
+                _def = float(
+                    st.session_state.get(f"hr_cw_{_tk}", _eq_w.get(_tk, 100.0 / max(_n_sel, 1)))
+                )
+                _custom_w[_tk] = st.number_input(
+                    f"{_tk} (%)",
+                    min_value=0.0, max_value=100.0,
+                    value=_def, step=1.0, format="%.1f",
+                    key=f"hr_cw_{_tk}",
+                )
+        _cw_total = sum(_custom_w.values())
+        _cw_ok    = abs(_cw_total - 100.0) < 0.11
+        _cwc1, _cwc2, _cwc3 = st.columns(3)
+        with _cwc1:
+            (st.success if _cw_ok else st.warning)(f"Total: {_cw_total:.1f}%")
+        with _cwc2:
+            if st.button("Normalize to 100%", key="hr_cw_norm"):
+                _nt = sum(_custom_w.values())
+                if _nt > 0:
+                    for _tk in selected_tickers:
+                        st.session_state[f"hr_cw_{_tk}"] = round(_custom_w[_tk] / _nt * 100, 1)
+                    st.rerun()
+        with _cwc3:
+            if st.button("Reset to equal weight", key="hr_cw_reset_eq"):
+                for _tk in selected_tickers:
+                    st.session_state[f"hr_cw_{_tk}"] = round(100.0 / max(_n_sel, 1), 1)
+                st.rerun()
+        if any(v < 0 for v in _custom_w.values()):
+            st.error("Weights cannot be negative.")
+            _custom_w = dict(_eq_w)
+        _max_cw = max(_custom_w.values()) if _custom_w else 0
+        if _max_cw > 60.0:
+            st.warning(
+                f"Concentration risk: one position is {_max_cw:.0f}% of the portfolio. "
+                "This is a research simulation only."
+            )
+        _preview_weights = dict(_custom_w)
+
+    # Allocation preview table
+    _alloc_rows = []
+    for _tk in selected_tickers:
+        _wpct    = _preview_weights.get(_tk, 100.0 / max(_n_sel, 1))
+        _dollars = initial_capital * _wpct / 100
+        _arow    = {"Ticker": _tk, "Weight %": f"{_wpct:.1f}%", "$ Allocation": f"${_dollars:,.0f}"}
+        if model_backed and top_df is not None:
+            _mr_rows = top_df[top_df["ticker"] == _tk]
+            if not _mr_rows.empty:
+                _mr = _mr_rows.iloc[0]
+                _sig_col = (
+                    "final_signal_calibrated_risk_adjusted"
+                    if use_risk_replay and "final_signal_calibrated_risk_adjusted" in top_df.columns
+                    else "final_signal_calibrated"
+                    if use_calib_replay and "final_signal_calibrated" in top_df.columns
+                    else "final_signal"
+                )
+                _arow["Signal"]    = str(_mr.get(_sig_col) or _mr.get("final_signal") or "")
+                _vg = _mr.get("valuation_gap_pct")
+                _arow["Val. Gap %"] = f"{float(_vg):+.1f}%" if pd.notna(_vg) else "—"
+                _qs = _mr.get("quality_score")
+                _arow["Quality"]   = f"{float(_qs):.0f}" if pd.notna(_qs) else "—"
+        _alloc_rows.append(_arow)
+    st.dataframe(pd.DataFrame(_alloc_rows), use_container_width=True, hide_index=True)
+
+    # Auto-normalize and store final run weights
+    _run_weights_raw = dict(_preview_weights)
+    _rw_sum = sum(_run_weights_raw.values())
+    if _rw_sum > 0:
+        _run_weights = {t: v / _rw_sum * 100 for t, v in _run_weights_raw.items()}
+    else:
+        _run_weights = {t: 100.0 / max(_n_sel, 1) for t in selected_tickers}
+    if abs(sum(_run_weights_raw.values()) - 100.0) > 0.5:
+        st.warning(
+            f"Weights sum to {sum(_run_weights_raw.values()):.1f}% — "
+            "will be auto-normalized to 100% when the simulation runs."
+        )
+
     # ── Run + Test ────────────────────────────────────────────────────────────
     st.divider()
     btn_c1, btn_c2, _ = st.columns([2, 2, 4])
@@ -3016,6 +4166,8 @@ def _pp_replay_tab(df: pd.DataFrame) -> None:
             "target_exit":     str(end_ts.date()),
             "display_exit":    end_date_str,
             "exit_capped":     exit_capped,
+            "weights":         dict(_run_weights),
+            "alloc_method":    alloc_method,
         }
 
     # ── Results ───────────────────────────────────────────────────────────────
@@ -3100,16 +4252,29 @@ Signal year: <strong>{params['signal_year']}</strong> {mo_note}
 """, unsafe_allow_html=True)
 
     # ── Compute returns ───────────────────────────────────────────────────────
-    alloc_per_stock = capital / len(ok_tickers)
-    total_end_val   = 0.0
-    stock_rows      = []
+    # Use per-stock weights from params; fall back to equal weight if missing
+    _res_weights = params.get("weights", {})
+    _res_alloc_method = params.get("alloc_method", "Equal weight")
+    if not _res_weights or not all(t in _res_weights for t in ok_tickers):
+        _res_weights = {t: 100.0 / len(ok_tickers) for t in ok_tickers}
+    _rw_ok_total = sum(_res_weights.get(t, 0) for t in ok_tickers)
+    if _rw_ok_total <= 0:
+        _rw_ok_total = len(ok_tickers)
+    # Normalize to 100% across only the ok_tickers (excluded tickers don't get allocation)
+    _ok_weights = {t: _res_weights.get(t, 0) / _rw_ok_total * 100 for t in ok_tickers}
+
+    total_end_val = 0.0
+    stock_rows    = []
 
     for t in ok_tickers:
-        p       = prices[t]
-        ep, xp  = p["entry_price"], p["exit_price"]
-        shares  = alloc_per_stock / ep
-        end_val = shares * xp
-        ret_pct = (xp - ep) / ep * 100
+        p           = prices[t]
+        ep, xp      = p["entry_price"], p["exit_price"]
+        _wpct       = _ok_weights.get(t, 100.0 / len(ok_tickers))
+        alloc_amt   = capital * _wpct / 100
+        shares      = alloc_amt / ep
+        end_val     = shares * xp
+        ret_pct     = (xp - ep) / ep * 100
+        contrib_pct = _wpct / 100 * ret_pct  # contribution to portfolio return
         total_end_val += end_val
 
         match_row = all_mo[
@@ -3127,13 +4292,15 @@ Signal year: <strong>{params['signal_year']}</strong> {mo_note}
             "Ticker":         t,
             "Company":        company,
             "Signal year":    params["signal_year"],
+            "Weight %":       _wpct,
             "Entry date":     p.get("entry_date", ""),
             "Entry price":    ep,
             "Exit date":      p.get("exit_date", ""),
             "Exit price":     xp,
-            "Allocation ($)": alloc_per_stock,
+            "Allocation ($)": alloc_amt,
             "Shares":         shares,
             "Return %":       ret_pct,
+            "Contribution %": contrib_pct,
             "End value ($)":  end_val,
             "Signal":         signal,
             "Val. gap %":     vgap,
@@ -3200,8 +4367,14 @@ Signal year: <strong>{params['signal_year']}</strong> {mo_note}
 
         port_vals = pd.Series(0.0, index=price_df.index)
         for t in ok_tickers:
-            if t in price_df.columns:
-                port_vals += price_df[t] * (alloc_per_stock / prices[t]["entry_price"])
+            if t not in price_df.columns:
+                continue
+            _ep = prices[t].get("entry_price")
+            if not _ep or _ep <= 0:
+                continue
+            _wpct_curve = _ok_weights.get(t, 100.0 / len(ok_tickers))
+            _shares_curve = capital * _wpct_curve / 100 / _ep
+            port_vals += price_df[t] * _shares_curve
         port_vals = port_vals[port_vals > 0]
 
         fig_line = go.Figure()
@@ -3237,13 +4410,20 @@ Signal year: <strong>{params['signal_year']}</strong> {mo_note}
         st.plotly_chart(fig_line, use_container_width=True)
 
     # ── Individual stock table ────────────────────────────────────────────────
-    st.markdown("#### Individual Stock Performance")
+    st.markdown(
+        f"#### Individual Stock Performance  "
+        f"<span style='font-size:12px;color:#64748b;font-weight:400'>"
+        f"Allocation: {_res_alloc_method}</span>",
+        unsafe_allow_html=True,
+    )
     stock_result_df = pd.DataFrame(stock_rows)
     if not stock_result_df.empty:
         display_df = stock_result_df.copy()
         display_df["Val. gap %"] = display_df["Val. gap %"].apply(
             lambda v: f"{v:+.1f}%" if (v is not None and pd.notna(v)) else ""
         )
+        display_df["Weight %"]       = display_df["Weight %"].apply(lambda v: f"{v:.1f}%")
+        display_df["Contribution %"] = display_df["Contribution %"].apply(lambda v: f"{v:+.2f}%")
         display_df["Shares"] = display_df["Shares"].apply(lambda v: f"{v:.4f}")
         for col in ["Entry price", "Exit price", "Allocation ($)", "End value ($)"]:
             display_df[col] = display_df[col].apply(lambda v: f"${v:,.2f}")
@@ -3304,7 +4484,7 @@ Historical Replay uses annual model signals mapped to the selected start date's 
 It is a research simulation, not a prediction or investment recommendation.<br>
 • Prices from yfinance may differ from actual execution prices (bid/ask spread, market hours).<br>
 • No transaction costs, taxes, dividends, or slippage are modeled.<br>
-• Equal-weight allocation is a simplification; real portfolios require rebalancing.<br>
+• Allocation is a research simulation; real portfolios require rebalancing and ongoing risk management.<br>
 • Survivorship bias: only tickers with available yfinance data are included.<br>
 • Past simulated performance does not predict future real-world results.<br>
 • This tool is for educational research only and is not investment advice.
