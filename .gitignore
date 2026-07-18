@@ -21,3 +21,7 @@ __pycache__/
 *.pyc
 watchlist.csv
 research_notes.csv
+
+# Local generated folders
+backups/
+sec_filing_10q_cache/
