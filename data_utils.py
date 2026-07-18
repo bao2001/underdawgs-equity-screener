@@ -333,6 +333,7 @@ def load_current_market_data() -> tuple:
         return None, f"Error loading current_market_data.csv: {exc}"
 
 
+TICKER_UNIVERSE_CSV    = os.path.join(_DIR, "ticker_universe.csv")
 LATEST_10Q_RISK_CSV    = os.path.join(_DIR, "latest_10q_risk_scores.csv")
 FILING_RISK_UPDATE_CSV = os.path.join(_DIR, "filing_risk_current_update.csv")
 
@@ -360,3 +361,201 @@ def load_filing_risk_update() -> tuple:
         return df, f"Filing risk update: {len(df)} tickers ({summary})"
     except Exception as exc:
         return None, f"Error loading filing risk update: {exc}"
+
+
+# ── Ticker universe ───────────────────────────────────────────────────────────
+
+_UNIVERSE_COLS = [
+    "ticker", "company_name", "cik", "sector", "industry",
+    "active", "universe_group", "data_status", "notes",
+]
+_EXTRA_UNIVERSE_COLS = [
+    "validation_status",
+    "company_facts_status",
+    "market_cap_status",
+    "model_output_status",
+    "filing_10k_status",
+    "filing_10q_status",
+    "current_market_status",
+    "last_pipeline_run",
+    "failure_reason",
+]
+ALL_UNIVERSE_COLS = _UNIVERSE_COLS + _EXTRA_UNIVERSE_COLS
+_UNIVERSE_GROUPS = ["current_demo", "expanded_tech", "sp500_sample", "custom"]
+
+
+def _upgrade_universe_schema(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure the extra pipeline-status columns exist (empty string default)."""
+    for col in _EXTRA_UNIVERSE_COLS:
+        if col not in df.columns:
+            df[col] = ""
+    return df
+
+
+def load_ticker_universe() -> tuple:
+    """
+    Load ticker_universe.csv.  If missing, bootstrap it from existing model outputs
+    (universe_group = 'current_demo', active = True, data_status = 'available').
+
+    Returns (df, status_msg).  df always has ALL_UNIVERSE_COLS; never None.
+    """
+    if os.path.exists(TICKER_UNIVERSE_CSV):
+        try:
+            df = pd.read_csv(TICKER_UNIVERSE_CSV, dtype=str).fillna("")
+            _needs_upgrade = any(c not in df.columns for c in _EXTRA_UNIVERSE_COLS)
+            for col in _UNIVERSE_COLS:
+                if col not in df.columns:
+                    df[col] = ""
+            df = _upgrade_universe_schema(df)
+            if _needs_upgrade:
+                try:
+                    df.to_csv(TICKER_UNIVERSE_CSV, index=False)
+                except Exception:
+                    pass
+            return df, f"Ticker universe: {len(df)} tickers loaded."
+        except Exception:
+            pass  # fall through to bootstrap
+
+    # Bootstrap from best available model output file
+    _cands = [
+        MODEL_OUTPUTS_RISK_CSV, MODEL_OUTPUTS_CALIBRATED_CSV,
+        MODEL_OUTPUTS_COMBINED_CSV, MODEL_OUTPUTS_REVIEWED_CSV, MODEL_OUTPUTS_CSV,
+    ]
+    rows = []
+    for path in _cands:
+        if not os.path.exists(path):
+            continue
+        try:
+            raw = pd.read_csv(path)
+            if raw.empty or "ticker" not in raw.columns:
+                continue
+            latest = raw.sort_values("year").groupby("ticker", as_index=False).last()
+            for _, r in latest.iterrows():
+                rows.append({
+                    "ticker":              str(r["ticker"]).upper(),
+                    "company_name":        str(r.get("company_name") or ""),
+                    "cik":                 str(r.get("company_id") or ""),
+                    "sector":              "Technology",
+                    "industry":            "",
+                    "active":              "True",
+                    "universe_group":      "current_demo",
+                    "data_status":         "available",
+                    "notes":               "bootstrapped from model outputs",
+                    "validation_status":   "",
+                    "company_facts_status": "available",
+                    "market_cap_status":   "available",
+                    "model_output_status": "available",
+                    "filing_10k_status":   "",
+                    "filing_10q_status":   "",
+                    "current_market_status": "",
+                    "last_pipeline_run":   "",
+                    "failure_reason":      "",
+                })
+            break
+        except Exception:
+            continue
+
+    df = pd.DataFrame(rows, columns=ALL_UNIVERSE_COLS) if rows else pd.DataFrame(columns=ALL_UNIVERSE_COLS)
+
+    # Persist so subsequent calls are fast
+    try:
+        df.to_csv(TICKER_UNIVERSE_CSV, index=False)
+    except Exception:
+        pass
+
+    n = len(df)
+    msg = (
+        f"Ticker universe bootstrapped from model outputs: {n} tickers (current_demo)."
+        if n > 0
+        else "No model outputs found — ticker universe is empty."
+    )
+    return df, msg
+
+
+def expand_universe_for_tickers(tickers: list) -> tuple:
+    """
+    Add new tickers to ticker_universe.csv with data_status='pending'.
+
+    Safe:
+    - Validates ticker format (1–5 uppercase letters/digits).
+    - Skips tickers already in the universe.
+    - Looks up CIK from existing model outputs if available.
+    - Does NOT fetch SEC data, yfinance, or run any model jobs.
+
+    Returns (added_count, skipped_count, message).
+    """
+    import re
+
+    if not tickers:
+        return 0, 0, "No tickers provided."
+
+    # Load existing
+    universe_df, _ = load_ticker_universe()
+    existing = set(universe_df["ticker"].str.upper().tolist())
+
+    # Build CIK lookup from model outputs
+    _cik_map: dict = {}
+    for path in [MODEL_OUTPUTS_RISK_CSV, MODEL_OUTPUTS_CALIBRATED_CSV,
+                 MODEL_OUTPUTS_COMBINED_CSV, MODEL_OUTPUTS_REVIEWED_CSV, MODEL_OUTPUTS_CSV]:
+        if os.path.exists(path):
+            try:
+                _raw = pd.read_csv(path, usecols=lambda c: c in ("ticker", "company_id"))
+                for _, r in _raw.iterrows():
+                    _t = str(r.get("ticker", "")).upper()
+                    _c = str(r.get("company_id", ""))
+                    if _t and _c and _t not in _cik_map:
+                        _cik_map[_t] = _c
+                break
+            except Exception:
+                continue
+
+    _ticker_re = re.compile(r"^[A-Z0-9]{1,5}$")
+    new_rows   = []
+    skipped    = []
+
+    for raw_t in tickers:
+        t = str(raw_t).strip().upper()
+        if not _ticker_re.match(t):
+            skipped.append(f"{raw_t} (invalid format)")
+            continue
+        if t in existing:
+            skipped.append(f"{t} (already in universe)")
+            continue
+        new_rows.append({
+            "ticker":              t,
+            "company_name":        "",
+            "cik":                 _cik_map.get(t, ""),
+            "sector":              "",
+            "industry":            "",
+            "active":              "True",
+            "universe_group":      "custom",
+            "data_status":         "pending",
+            "notes":               "added via expand_universe_for_tickers; data not yet generated",
+            "validation_status":   "",
+            "company_facts_status": "",
+            "market_cap_status":   "",
+            "model_output_status": "",
+            "filing_10k_status":   "",
+            "filing_10q_status":   "",
+            "current_market_status": "",
+            "last_pipeline_run":   "",
+            "failure_reason":      "",
+        })
+        existing.add(t)
+
+    if new_rows:
+        combined = pd.concat(
+            [universe_df, pd.DataFrame(new_rows, columns=ALL_UNIVERSE_COLS)],
+            ignore_index=True,
+        )
+        try:
+            combined.to_csv(TICKER_UNIVERSE_CSV, index=False)
+        except Exception as exc:
+            return 0, len(skipped), f"Failed to save universe: {exc}"
+
+    added = len(new_rows)
+    msg_parts = [f"Added {added} ticker(s) with data_status='pending'."]
+    if skipped:
+        msg_parts.append(f"Skipped: {', '.join(skipped[:10])}" + (" …" if len(skipped) > 10 else ""))
+    msg_parts.append("Run model pipeline to generate outputs before these appear in Screener.")
+    return added, len(skipped), "  ".join(msg_parts)

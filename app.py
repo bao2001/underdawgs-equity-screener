@@ -19,6 +19,19 @@ from data_utils import (
     load_model_outputs,
     load_current_market_data,
     fetch_current_market_data,
+    load_ticker_universe,
+    expand_universe_for_tickers,
+)
+from ticker_setup_utils import (
+    validate_tickers_for_wizard,
+    check_ticker_readiness,
+    promote_ticker_if_ready,
+    prepare_single_ticker_fundamentals,
+    prepare_single_ticker_market_cap,
+    prepare_single_ticker_model_output,
+    prepare_single_ticker_10k_risk,
+    prepare_single_ticker_10q_risk,
+    prepare_single_ticker_current_market,
 )
 from paper_portfolio_utils import (
     load_paper_portfolio, save_paper_portfolio,
@@ -475,6 +488,12 @@ def _load_all_model_outputs():
     }
     label = _label_map.get(src, src)
     return df, f"{label}: {len(df)} rows across years {yrs}"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_ticker_universe_cached() -> tuple:
+    """Cached ticker universe load (1-hour TTL — refreshed after pipeline runs)."""
+    return load_ticker_universe()
 
 
 @st.cache_data(ttl=3600)
@@ -1158,6 +1177,18 @@ def page_screener(df: pd.DataFrame) -> None:
             for _c in ["latest_10q_risk_score", "filing_risk_trend", "filing_risk_delta", "latest_10q_filing_date"]:
                 active_df[_c] = None
 
+    # Merge universe_group into active_df for screener filter
+    try:
+        _uni_df, _ = _load_ticker_universe_cached()
+        if not _uni_df.empty and "universe_group" in _uni_df.columns:
+            _uni_slim = _uni_df[["ticker", "universe_group"]].copy()
+            _uni_slim["Ticker"] = _uni_slim["ticker"].str.upper()
+            _uni_slim = _uni_slim.drop(columns="ticker")
+            active_df = active_df.merge(_uni_slim, on="Ticker", how="left")
+            active_df["universe_group"] = active_df["universe_group"].fillna("current_demo")
+    except Exception:
+        active_df["universe_group"] = "current_demo"
+
     # Current valuation gap using live market cap vs model fair value
     if use_xbrl and "Estimated_Fair_Value" in active_df.columns:
         _cmask = (
@@ -1366,6 +1397,23 @@ def page_screener(df: pd.DataFrame) -> None:
                 key="flt_sort",
             )
 
+        # Universe group filter — only shown when multiple groups are present
+        sel_uni_groups: list = []
+        _uni_groups_avail = (
+            sorted(active_df["universe_group"].dropna().unique().tolist())
+            if "universe_group" in active_df.columns else []
+        )
+        if len(_uni_groups_avail) > 1:
+            _ug1, _ug2, _ = st.columns(3)
+            with _ug1:
+                sel_uni_groups = st.multiselect(
+                    "Universe group",
+                    _uni_groups_avail,
+                    default=_uni_groups_avail,
+                    key="flt_uni_group",
+                    help="Filter by universe group (current_demo, expanded_100, custom).",
+                )
+
         sel_freshness: list = []
         sel_trend: list = []
         _has_freshness_col = "market_freshness" in active_df.columns
@@ -1411,6 +1459,9 @@ def page_screener(df: pd.DataFrame) -> None:
 
     if _risk_col in fdf.columns:
         fdf = fdf[fdf[_risk_col].fillna(0) <= rsk_max_filter].copy()
+
+    if sel_uni_groups and "universe_group" in fdf.columns:
+        fdf = fdf[fdf["universe_group"].isin(sel_uni_groups)].copy()
 
     if sel_freshness and "market_freshness" in fdf.columns:
         fdf = fdf[fdf["market_freshness"].isin(sel_freshness)].copy()
@@ -1587,6 +1638,31 @@ def page_screener(df: pd.DataFrame) -> None:
 
     if not visible_tickers:
         st.warning("No companies match the current filters.")
+        # If the search matches a pending ticker in universe, show a helpful note
+        if ticker_search.strip():
+            _srch_up = ticker_search.strip().upper()
+            try:
+                _uni_s, _ = load_ticker_universe()
+                if not _uni_s.empty:
+                    _uni_match = _uni_s[_uni_s["ticker"].str.upper() == _srch_up]
+                    if not _uni_match.empty:
+                        _u_s_row  = _uni_match.iloc[0]
+                        _u_s_stat = str(_u_s_row.get("data_status", ""))
+                        _u_s_name = str(_u_s_row.get("company_name", "")).strip()
+                        if _u_s_stat != "available":
+                            st.info(
+                                f"**{_srch_up}**"
+                                f"{' — ' + _u_s_name if _u_s_name else ''} "
+                                f"is in the ticker universe (status: **{_u_s_stat}**) "
+                                "but model outputs are not yet available. "
+                                "Go to **About → Ticker Universe** to run the pipeline."
+                            )
+            except Exception:
+                pass
+        st.caption(
+            "Screener includes tickers with available model outputs. "
+            "Pending tickers are tracked in **About → Ticker Universe**."
+        )
     else:
         # Validate session state — reset to first visible if stale
         if st.session_state.get("screener_selected_ticker") not in visible_tickers:
@@ -1776,6 +1852,55 @@ def _clean_filing_text(text: str) -> str:
 def _xbrl_company_detail(mo: pd.DataFrame) -> None:
     """Full company detail page for XBRL model output data."""
     all_tickers = sorted(mo["Ticker"].unique())
+
+    # Universe-awareness: if the requested ticker is in the universe but has no model output, say so
+    _req = str(st.session_state.get("selected_ticker", "")).upper()
+    if _req and _req not in [t.upper() for t in all_tickers]:
+        try:
+            _uni, _ = load_ticker_universe()
+            if not _uni.empty and _req in _uni["ticker"].str.upper().values:
+                _u_row       = _uni[_uni["ticker"].str.upper() == _req].iloc[0]
+                _u_grp       = str(_u_row.get("universe_group", ""))
+                _u_stat      = str(_u_row.get("data_status", ""))
+                _u_company   = str(_u_row.get("company_name", "")).strip()
+                _u_failure   = str(_u_row.get("failure_reason", "")).strip()
+                _u_last_run  = str(_u_row.get("last_pipeline_run", "")).strip()
+
+                _ready = check_ticker_readiness(_req)
+                _missing = []
+                if not _ready["has_fundamentals"]:
+                    _missing.append("SEC company facts (fundamentals)")
+                if not _ready["has_market_cap"]:
+                    _missing.append("Market cap data")
+                if not _ready["has_model_output"]:
+                    _missing.append("Model output")
+                if not _ready["has_10k_risk"]:
+                    _missing.append("10-K filing risk")
+
+                _lines = [
+                    f"**{_req}**{' — ' + _u_company if _u_company else ''} is in the ticker "
+                    f"universe (group: **{_u_grp}**, status: **{_u_stat}**), but model outputs "
+                    "are not yet available for this ticker.",
+                ]
+                if _missing:
+                    _lines.append("**Missing pipeline steps:** " + ", ".join(_missing))
+                if _u_failure:
+                    _lines.append(f"**Last failure:** {_u_failure}")
+                if _u_last_run:
+                    _lines.append(f"Last pipeline run: {_u_last_run}")
+                _lines.append(
+                    "To generate data for this ticker, go to **About → Ticker Universe** "
+                    "and run the pipeline steps."
+                )
+                st.info("  \n".join(_lines))
+
+                if st.button("Go to Ticker Universe setup",
+                             key="detail_goto_uni_btn"):
+                    st.session_state.pending_nav_page = "About"
+                    st.rerun()
+        except Exception:
+            pass
+
     default_idx = (
         all_tickers.index(st.session_state.selected_ticker)
         if st.session_state.selected_ticker in all_tickers else 0
@@ -3608,11 +3733,19 @@ Historical replay uses simplified assumptions and does not predict future result
         _pp_watchlist_tab()
 
 
-def _compute_model_weights_replay(top_df, tickers: list) -> dict:
+def _compute_profile_weights_replay(top_df, tickers: list, profile: str = "balanced") -> dict:
     """
-    Signal-based weights using only replay-year fundamentals — no future returns.
-    Formula: 0.45×valuation_rank + 0.35×quality_component + 0.20×low_risk_component
-    Clips to min 5%, max 40% per position. Returns {ticker: weight_pct} summing to ~100.
+    Signal-based allocation weights using only replay-year fundamentals — no future returns.
+
+    Profiles:
+      conservative: 0.25×val + 0.45×qual + 0.30×risk  min 5%  max 25%
+      balanced:     0.45×val + 0.35×qual + 0.20×risk  min 5%  max 40%
+      aggressive:   0.60×val + 0.25×qual + 0.15×risk  min 3%  max 50%
+
+    Components:
+      val_c  = percentile rank of valuation_gap_pct among selected tickers (higher gap → higher)
+      qual_c = quality_score / 100
+      risk_c = 1 - filing_risk_score / 100
     """
     n = len(tickers)
     if n == 0:
@@ -3620,13 +3753,20 @@ def _compute_model_weights_replay(top_df, tickers: list) -> dict:
     if n == 1:
         return {tickers[0]: 100.0}
 
+    _PROFILES = {
+        "conservative": dict(w_val=0.25, w_qual=0.45, w_risk=0.30, min_w=5.0, max_w=25.0),
+        "balanced":     dict(w_val=0.45, w_qual=0.35, w_risk=0.20, min_w=5.0, max_w=40.0),
+        "aggressive":   dict(w_val=0.60, w_qual=0.25, w_risk=0.15, min_w=3.0, max_w=50.0),
+    }
+    cfg = _PROFILES.get(profile, _PROFILES["balanced"])
+
     vgaps, qualities, risks = [], [], []
     for t in tickers:
         rows = top_df[top_df["ticker"] == t] if top_df is not None and not top_df.empty else pd.DataFrame()
         if rows.empty:
             vgaps.append(None); qualities.append(None); risks.append(None)
             continue
-        r = rows.iloc[0]
+        r  = rows.iloc[0]
         vg = r.get("valuation_gap_pct")
         vgaps.append(float(vg) if pd.notna(vg) else None)
         qs = r.get("quality_score")
@@ -3649,17 +3789,24 @@ def _compute_model_weights_replay(top_df, tickers: list) -> dict:
         val_c  = vg_ranks[i]
         qual_c = max(0.0, min(1.0, qualities[i] / 100)) if qualities[i] is not None else 0.5
         risk_c = max(0.0, min(1.0, 1 - risks[i] / 100)) if risks[i] is not None else 0.5
-        scores[t] = 0.45 * val_c + 0.35 * qual_c + 0.20 * risk_c
+        scores[t] = (cfg["w_val"] * val_c
+                     + cfg["w_qual"] * qual_c
+                     + cfg["w_risk"] * risk_c)
 
-    total  = sum(scores.values()) or 1.0
-    raw_w  = {t: scores[t] / total * 100 for t in tickers}
-    clipped = {t: max(5.0, min(40.0, w)) for t, w in raw_w.items()}
-    ct     = sum(clipped.values()) or 1.0
+    total   = sum(scores.values()) or 1.0
+    raw_w   = {t: scores[t] / total * 100 for t in tickers}
+    clipped = {t: max(cfg["min_w"], min(cfg["max_w"], w)) for t, w in raw_w.items()}
+    ct      = sum(clipped.values()) or 1.0
     weights = {t: round(clipped[t] / ct * 100, 1) for t in tickers}
-    diff   = round(100.0 - sum(weights.values()), 1)
+    diff    = round(100.0 - sum(weights.values()), 1)
     if tickers and diff != 0:
         weights[tickers[0]] = round(weights[tickers[0]] + diff, 1)
     return weights
+
+
+def _compute_model_weights_replay(top_df, tickers: list) -> dict:
+    """Backward-compat shim — delegates to balanced profile."""
+    return _compute_profile_weights_replay(top_df, tickers, profile="balanced")
 
 
 def _pp_replay_tab(df: pd.DataFrame) -> None:
@@ -3993,7 +4140,11 @@ def _pp_replay_tab(df: pd.DataFrame) -> None:
 
     _alloc_opts = ["Equal weight"]
     if model_backed and top_df is not None:
-        _alloc_opts.append("Model-recommended weight")
+        _alloc_opts += [
+            "Conservative profile",
+            "Balanced signal-based weight",
+            "Aggressive profile",
+        ]
     _alloc_opts.append("Custom weight")
 
     alloc_method = st.radio(
@@ -4003,21 +4154,59 @@ def _pp_replay_tab(df: pd.DataFrame) -> None:
         key="hr_alloc_method",
     )
 
+    # Profile caption (shown for any signal-based profile)
+    _is_profile = alloc_method in (
+        "Conservative profile", "Balanced signal-based weight", "Aggressive profile"
+    )
+    if _is_profile:
+        st.caption(
+            "Profile weights are based on valuation, quality, and filing-risk signals "
+            "available at the replay start. They are not optimized using future returns. "
+            "Min/max position caps vary by profile."
+        )
+
     # Compute display weights
     if alloc_method == "Equal weight":
         _preview_weights = dict(_eq_w)
 
-    elif alloc_method == "Model-recommended weight":
-        _preview_weights = _compute_model_weights_replay(top_df, selected_tickers)
-        st.caption(
-            "Model-recommended weights use valuation gap, quality score, and filing-risk signals "
-            "available at the replay signal year — no future returns used. "
-            "Min 5% / max 40% per position. These are research allocations, not optimal portfolios."
+    elif alloc_method == "Conservative profile":
+        _preview_weights = _compute_profile_weights_replay(
+            top_df, selected_tickers, profile="conservative"
         )
-        if _n_sel > 1 and st.button("Copy to custom weights", key="hr_cw_copy_model"):
+        st.caption(
+            "Conservative — quality-first: 0.25×valuation + 0.45×quality + 0.30×low-risk. "
+            "Min 5% / max 25% per position."
+        )
+        if _n_sel > 1 and st.button("Copy to custom weights", key="hr_cw_copy_cons"):
             for _tk, _mw in _preview_weights.items():
                 st.session_state[f"hr_cw_{_tk}"] = _mw
-            st.info("Copied. Switch to **Custom weight** above to adjust.")
+            st.info("Copied. Switch to **Custom weight** to adjust.")
+
+    elif alloc_method == "Balanced signal-based weight":
+        _preview_weights = _compute_profile_weights_replay(
+            top_df, selected_tickers, profile="balanced"
+        )
+        st.caption(
+            "Balanced — 0.45×valuation + 0.35×quality + 0.20×low-risk. "
+            "Min 5% / max 40% per position."
+        )
+        if _n_sel > 1 and st.button("Copy to custom weights", key="hr_cw_copy_bal"):
+            for _tk, _mw in _preview_weights.items():
+                st.session_state[f"hr_cw_{_tk}"] = _mw
+            st.info("Copied. Switch to **Custom weight** to adjust.")
+
+    elif alloc_method == "Aggressive profile":
+        _preview_weights = _compute_profile_weights_replay(
+            top_df, selected_tickers, profile="aggressive"
+        )
+        st.caption(
+            "Aggressive — valuation-first: 0.60×valuation + 0.25×quality + 0.15×low-risk. "
+            "Min 3% / max 50% per position."
+        )
+        if _n_sel > 1 and st.button("Copy to custom weights", key="hr_cw_copy_agg"):
+            for _tk, _mw in _preview_weights.items():
+                st.session_state[f"hr_cw_{_tk}"] = _mw
+            st.info("Copied. Switch to **Custom weight** to adjust.")
 
     else:  # Custom weight
         _preview_weights = _eq_w.copy()  # starting point; overridden by widgets below
@@ -4289,24 +4478,25 @@ Signal year: <strong>{params['signal_year']}</strong> {mo_note}
             if not match_row.empty and "company_name" in match_row.columns else t
         )
         stock_rows.append({
-            "Ticker":         t,
-            "Company":        company,
-            "Signal year":    params["signal_year"],
-            "Weight %":       _wpct,
-            "Entry date":     p.get("entry_date", ""),
-            "Entry price":    ep,
-            "Exit date":      p.get("exit_date", ""),
-            "Exit price":     xp,
-            "Allocation ($)": alloc_amt,
-            "Shares":         shares,
-            "Return %":       ret_pct,
-            "Contribution %": contrib_pct,
-            "End value ($)":  end_val,
-            "Signal":         signal,
-            "Val. gap %":     vgap,
-            "Quality score":  quality,
-            "Report risk":    risk,
-            "Replay type":    replay_type_lbl,
+            "Ticker":           t,
+            "Company":          company,
+            "Signal year":      params["signal_year"],
+            "Weight %":         _wpct,
+            "Entry date":       p.get("entry_date", ""),
+            "Entry price":      ep,
+            "Exit date":        p.get("exit_date", ""),
+            "Exit price":       xp,
+            "Allocation ($)":   alloc_amt,
+            "Shares":           shares,
+            "Return %":         ret_pct,
+            "Dollar Gain/Loss": end_val - alloc_amt,
+            "Contribution %":   contrib_pct,
+            "End value ($)":    end_val,
+            "Signal":           signal,
+            "Val. gap %":       vgap,
+            "Quality score":    quality,
+            "Report risk":      risk,
+            "Replay type":      replay_type_lbl,
         })
 
     port_return_pct = (total_end_val - capital) / capital * 100
@@ -4337,31 +4527,31 @@ Signal year: <strong>{params['signal_year']}</strong> {mo_note}
 
     alpha = port_return_pct - bm_return_pct
 
-    # ── Summary metrics ───────────────────────────────────────────────────────
-    st.markdown("#### Replay Results")
-    rm1, rm2, rm3, rm4 = st.columns(4)
-    rm1.metric(
-        "Portfolio Return", f"{port_return_pct:+.1f}%",
-        delta=f"${portfolio_pl:+,.2f}",
-        help="Equal-weight portfolio total return. Research context only — not investment advice.",
-    )
-    rm2.metric(
-        f"Benchmark ({bm_choice})", f"{bm_return_pct:+.1f}%",
-        help=bm_status_msg + "  Benchmark comparison is context, not proof of future performance.",
-    )
-    rm3.metric("Alpha (vs benchmark)", f"{alpha:+.1f}%",
-               help="Portfolio return minus benchmark return. Historical context only.")
-    rm4.metric("Starting Capital", f"${capital:,.2f}",
-               delta=f"End: ${total_end_val:,.2f}")
+    # ── Compute risk metrics from daily price series ──────────────────────────
+    _port_vals_curve    = None
+    _max_drawdown_pct   = None
+    _ann_vol_pct        = None
+    _best_day_pct       = None
+    _worst_day_pct      = None
+    _ann_return_pct     = None
+    _risk_adj_return    = None
+    _bm_drawdown_series = None
 
-    # ── Daily portfolio chart ─────────────────────────────────────────────────
+    _holding_days = 0
+    try:
+        _holding_days = (
+            pd.Timestamp(last_exit) - pd.Timestamp(first_entry)
+        ).days
+    except Exception:
+        pass
+
     daily_map = {
         t: prices[t]["daily_series"]
         for t in ok_tickers
         if prices[t].get("daily_series") is not None
     }
     if daily_map:
-        price_df  = pd.concat(
+        price_df = pd.concat(
             [s.rename(t) for t, s in daily_map.items()], axis=1
         ).sort_index().ffill()
 
@@ -4372,12 +4562,126 @@ Signal year: <strong>{params['signal_year']}</strong> {mo_note}
             _ep = prices[t].get("entry_price")
             if not _ep or _ep <= 0:
                 continue
-            _wpct_curve = _ok_weights.get(t, 100.0 / len(ok_tickers))
+            _wpct_curve   = _ok_weights.get(t, 100.0 / len(ok_tickers))
             _shares_curve = capital * _wpct_curve / 100 / _ep
-            port_vals += price_df[t] * _shares_curve
+            port_vals    += price_df[t] * _shares_curve
         port_vals = port_vals[port_vals > 0]
 
-        fig_line = go.Figure()
+        if not port_vals.empty:
+            _port_vals_curve = port_vals
+            if len(port_vals) > 1:
+                _port_daily_rets = port_vals.pct_change().dropna()
+                if len(_port_daily_rets) > 0:
+                    _best_day_pct  = float(_port_daily_rets.max() * 100)
+                    _worst_day_pct = float(_port_daily_rets.min() * 100)
+                    _std           = float(_port_daily_rets.std())
+                    if _std > 0:
+                        _ann_vol_pct = _std * (252 ** 0.5) * 100
+                _rolling_max      = port_vals.cummax()
+                _dd_series        = (port_vals - _rolling_max) / _rolling_max * 100
+                _max_drawdown_pct = float(_dd_series.min())
+                if _holding_days >= 365 and capital > 0:
+                    _ann_return_pct = float(
+                        ((total_end_val / capital) ** (365.0 / _holding_days) - 1) * 100
+                    )
+                if (_ann_vol_pct is not None and _ann_vol_pct > 0.01
+                        and _ann_return_pct is not None):
+                    _risk_adj_return = _ann_return_pct / _ann_vol_pct
+
+        if bm_daily_series is not None and not bm_daily_series.empty:
+            try:
+                _bm_rm  = bm_daily_series.cummax()
+                _bm_drawdown_series = (bm_daily_series - _bm_rm) / _bm_rm * 100
+            except Exception:
+                pass
+
+    # ── Summary metrics ───────────────────────────────────────────────────────
+    st.markdown("#### Replay Results")
+
+    # Row 1 — performance
+    _r1 = st.columns(6)
+    _r1[0].metric("Starting Value", f"${capital:,.0f}")
+    _r1[1].metric("Ending Value",   f"${total_end_val:,.0f}",
+                  delta=f"${portfolio_pl:+,.0f}")
+    _r1[2].metric("Portfolio Return", f"{port_return_pct:+.1f}%",
+                  help="Total return over replay period. Research context only.")
+    _r1[3].metric(f"Benchmark ({bm_choice})", f"{bm_return_pct:+.1f}%",
+                  help=bm_status_msg + "  Benchmark comparison is context only.")
+    _r1[4].metric("Alpha (vs benchmark)", f"{alpha:+.1f}%",
+                  help="Portfolio return minus benchmark return. Historical context only.")
+    _r1[5].metric(
+        "Annualized Return",
+        f"{_ann_return_pct:+.1f}%" if _ann_return_pct is not None else "Unavailable",
+        help="Annualized from actual holding period. Requires ≥365 days.",
+    )
+
+    # Row 2 — risk
+    _r2 = st.columns(5)
+    _r2[0].metric(
+        "Max Drawdown",
+        f"{_max_drawdown_pct:.1f}%" if _max_drawdown_pct is not None else "Unavailable",
+        help="Largest peak-to-trough decline during replay.",
+    )
+    _r2[1].metric(
+        "Ann. Volatility",
+        f"{_ann_vol_pct:.1f}%" if _ann_vol_pct is not None else "Unavailable",
+        help="Annualized std dev of daily returns (×√252).",
+    )
+    _r2[2].metric(
+        "Best Day",
+        f"{_best_day_pct:+.2f}%" if _best_day_pct is not None else "Unavailable",
+    )
+    _r2[3].metric(
+        "Worst Day",
+        f"{_worst_day_pct:+.2f}%" if _worst_day_pct is not None else "Unavailable",
+    )
+    _r2[4].metric(
+        "Risk-Adj. Return",
+        f"{_risk_adj_return:.2f}x" if _risk_adj_return is not None else "Unavailable",
+        help="Annualized return ÷ annualized volatility. No risk-free rate deducted.",
+    )
+
+    # ── Best/worst summary cards ──────────────────────────────────────────────
+    if len(stock_rows) > 1:
+        _best_contrib   = max(stock_rows, key=lambda r: r["Contribution %"])
+        _worst_contrib  = min(stock_rows, key=lambda r: r["Contribution %"])
+        _best_ret_row   = max(stock_rows, key=lambda r: r["Return %"])
+        _largest_wt_row = max(stock_rows, key=lambda r: r["Weight %"])
+        _bw_cols = st.columns(4)
+        _bw_cols[0].markdown(
+            f'<div class="mini-card"><div class="label">Best Contributor</div>'
+            f'<div class="value" style="color:#27ae60">{_best_contrib["Ticker"]}</div>'
+            f'<div style="font-size:11px;color:#64748b">'
+            f'{_best_contrib["Contribution %"]:+.2f}% to portfolio</div></div>',
+            unsafe_allow_html=True,
+        )
+        _bw_cols[1].markdown(
+            f'<div class="mini-card"><div class="label">Worst Contributor</div>'
+            f'<div class="value" style="color:#dc2626">{_worst_contrib["Ticker"]}</div>'
+            f'<div style="font-size:11px;color:#64748b">'
+            f'{_worst_contrib["Contribution %"]:+.2f}% to portfolio</div></div>',
+            unsafe_allow_html=True,
+        )
+        _bw_cols[2].markdown(
+            f'<div class="mini-card"><div class="label">Highest Return</div>'
+            f'<div class="value" style="color:#2563eb">{_best_ret_row["Ticker"]}</div>'
+            f'<div style="font-size:11px;color:#64748b">'
+            f'{_best_ret_row["Return %"]:+.1f}%</div></div>',
+            unsafe_allow_html=True,
+        )
+        _bw_cols[3].markdown(
+            f'<div class="mini-card"><div class="label">Largest Weight</div>'
+            f'<div class="value">{_largest_wt_row["Ticker"]}</div>'
+            f'<div style="font-size:11px;color:#64748b">'
+            f'{_largest_wt_row["Weight %"]:.1f}%</div></div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Equity curve ──────────────────────────────────────────────────────────
+    if _port_vals_curve is not None:
+        port_vals  = _port_vals_curve
+        fig_line   = go.Figure()
         fig_line.add_trace(go.Scatter(
             x=port_vals.index, y=[capital] * len(port_vals),
             mode="lines", name="Cash baseline",
@@ -4391,11 +4695,11 @@ Signal year: <strong>{params['signal_year']}</strong> {mo_note}
                 mode="lines", name=bm_choice,
                 line=dict(color="#2563eb", width=2),
             ))
-        line_col = "#16a34a" if port_return_pct >= 0 else "#dc2626"
+        _line_col = "#16a34a" if port_return_pct >= 0 else "#dc2626"
         fig_line.add_trace(go.Scatter(
             x=port_vals.index, y=port_vals.values,
             mode="lines", name="Portfolio",
-            line=dict(color=line_col, width=2.5),
+            line=dict(color=_line_col, width=2.5),
         ))
         fig_line.update_layout(
             title=(
@@ -4409,25 +4713,62 @@ Signal year: <strong>{params['signal_year']}</strong> {mo_note}
         )
         st.plotly_chart(fig_line, use_container_width=True)
 
-    # ── Individual stock table ────────────────────────────────────────────────
+        # Drawdown chart
+        if _max_drawdown_pct is not None:
+            _dd_plot = (port_vals - port_vals.cummax()) / port_vals.cummax() * 100
+            fig_dd   = go.Figure()
+            fig_dd.add_trace(go.Scatter(
+                x=_dd_plot.index, y=_dd_plot.values,
+                mode="lines", name="Portfolio drawdown",
+                fill="tozeroy",
+                line=dict(color="#dc2626", width=1.5),
+                fillcolor="rgba(220,38,38,0.10)",
+            ))
+            if _bm_drawdown_series is not None:
+                _bm_dd_al = _bm_drawdown_series.reindex(_dd_plot.index).ffill().bfill()
+                fig_dd.add_trace(go.Scatter(
+                    x=_bm_dd_al.index, y=_bm_dd_al.values,
+                    mode="lines", name=f"{bm_choice} drawdown",
+                    line=dict(color="#2563eb", width=1.5, dash="dot"),
+                ))
+            fig_dd.update_layout(
+                title="Drawdown Over Time",
+                yaxis_title="Drawdown (%)",
+                height=260,
+                margin=dict(t=40, b=30, l=0, r=0),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig_dd, use_container_width=True)
+
+    # ── Position contribution table ───────────────────────────────────────────
     st.markdown(
-        f"#### Individual Stock Performance  "
+        f"#### Position Contributions  "
         f"<span style='font-size:12px;color:#64748b;font-weight:400'>"
         f"Allocation: {_res_alloc_method}</span>",
         unsafe_allow_html=True,
     )
     stock_result_df = pd.DataFrame(stock_rows)
     if not stock_result_df.empty:
-        display_df = stock_result_df.copy()
-        display_df["Val. gap %"] = display_df["Val. gap %"].apply(
-            lambda v: f"{v:+.1f}%" if (v is not None and pd.notna(v)) else ""
-        )
+        _contrib_cols = [
+            "Ticker", "Company", "Weight %", "Entry price", "Exit price",
+            "Return %", "Dollar Gain/Loss", "Contribution %", "End value ($)",
+        ]
+        _avail = [c for c in _contrib_cols if c in stock_result_df.columns]
+        display_df = stock_result_df[_avail].copy()
         display_df["Weight %"]       = display_df["Weight %"].apply(lambda v: f"{v:.1f}%")
+        display_df["Return %"]       = display_df["Return %"].apply(lambda v: f"{v:+.1f}%")
         display_df["Contribution %"] = display_df["Contribution %"].apply(lambda v: f"{v:+.2f}%")
-        display_df["Shares"] = display_df["Shares"].apply(lambda v: f"{v:.4f}")
-        for col in ["Entry price", "Exit price", "Allocation ($)", "End value ($)"]:
-            display_df[col] = display_df[col].apply(lambda v: f"${v:,.2f}")
-        display_df["Return %"] = display_df["Return %"].apply(lambda v: f"{v:+.1f}%")
+        for _col in ["Entry price", "Exit price"]:
+            if _col in display_df.columns:
+                display_df[_col] = display_df[_col].apply(lambda v: f"${v:,.2f}")
+        if "Dollar Gain/Loss" in display_df.columns:
+            display_df["Dollar Gain/Loss"] = display_df["Dollar Gain/Loss"].apply(
+                lambda v: f"${v:+,.2f}" if pd.notna(v) else "—"
+            )
+        if "End value ($)" in display_df.columns:
+            display_df["End value ($)"] = display_df["End value ($)"].apply(
+                lambda v: f"${v:,.2f}" if pd.notna(v) else "—"
+            )
 
         def _color_ret(val):
             try:
@@ -4438,13 +4779,15 @@ Signal year: <strong>{params['signal_year']}</strong> {mo_note}
 
         try:
             st.dataframe(
-                display_df.style.applymap(_color_ret, subset=["Return %"]),
+                display_df.style.applymap(
+                    _color_ret, subset=["Return %", "Contribution %"]
+                ),
                 use_container_width=True, hide_index=True,
             )
         except Exception:
             st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-    # ── Bar chart ─────────────────────────────────────────────────────────────
+    # ── Individual returns bar chart ──────────────────────────────────────────
     if stock_rows:
         chart_tickers = [r["Ticker"]   for r in stock_rows]
         chart_returns = [r["Return %"] for r in stock_rows]
@@ -4458,8 +4801,7 @@ Signal year: <strong>{params['signal_year']}</strong> {mo_note}
             name="Individual Returns",
         ))
         fig_bar.add_hline(
-            y=bm_return_pct,
-            line_dash="dash", line_color="#2563eb",
+            y=bm_return_pct, line_dash="dash", line_color="#2563eb",
             annotation_text=f"{bm_choice}: {bm_return_pct:+.1f}%",
             annotation_position="top right",
         )
@@ -4475,6 +4817,32 @@ Signal year: <strong>{params['signal_year']}</strong> {mo_note}
             showlegend=False,
         )
         st.plotly_chart(fig_bar, use_container_width=True)
+
+    # ── How to read these metrics ─────────────────────────────────────────────
+    with st.expander("How to read these replay metrics"):
+        st.markdown("""
+**Portfolio performance**
+- **Total return** — ending value minus starting value, as a percentage of the starting value.
+- **Annualized return** — total return rescaled to a per-year rate. Only shown for holding periods ≥ 365 days.
+- **Alpha** — portfolio return minus benchmark return over the same window. A positive value means the simulated portfolio outperformed the benchmark *historically* — it does not predict future outperformance.
+
+**Risk metrics**
+- **Max drawdown** — the largest peak-to-trough decline of the daily portfolio value during the replay. Measures worst cumulative loss from a high point.
+- **Annualized volatility** — standard deviation of daily portfolio returns multiplied by √252 to annualize. Higher = more day-to-day variability.
+- **Risk-adjusted return** — annualized return divided by annualized volatility. Not a Sharpe ratio (no risk-free rate is deducted). Gives a rough sense of return per unit of variability; only meaningful for holding periods ≥ 365 days.
+- **Best / worst day** — the single best and worst daily portfolio return during the replay window.
+
+**Position contributions**
+- **Contribution %** — fraction of total portfolio return attributable to this position. A 20%-weight position that gains 10% contributes +2.0% to the portfolio return.
+- **Dollar gain/loss** — ending value of this position minus its initial allocation.
+
+**Important guardrails**
+Historical replay is a research simulation using past data and is not a prediction of future results.
+- No transaction costs, taxes, dividends, or slippage are modeled.
+- Survivorship bias: only tickers with available yfinance price data are included.
+- Drawdown and volatility are computed from simulated daily portfolio values, not real traded positions.
+- Benchmark comparison is historical context only, not proof of future performance.
+        """)
 
     # ── Disclaimer ────────────────────────────────────────────────────────────
     st.markdown("""
@@ -5194,6 +5562,356 @@ def _pp_live_tab(df: pd.DataFrame) -> None:
 #  PAGE — ABOUT
 # ════════════════════════════════════════════════════════════════════════════
 
+def _render_ticker_universe_tab() -> None:
+    """Ticker Universe management panel — shown inside About → Ticker Universe tab."""
+    st.markdown("### Ticker Universe")
+    st.caption(
+        "The ticker universe controls which companies *can* be tracked by the app. "
+        "Only tickers with completed model outputs appear in the Screener. "
+        "Tickers with data_status='pending' are tracked but not yet ranked."
+    )
+
+    uni_df, uni_msg = load_ticker_universe()
+    st.caption(uni_msg)
+
+    # ── Summary stats ─────────────────────────────────────────────────────────
+    n_total  = len(uni_df) if not uni_df.empty else 0
+    n_active = int((uni_df["active"].astype(str).str.lower() == "true").sum()) if not uni_df.empty else 0
+    n_avail  = int((uni_df["data_status"] == "available").sum()) if not uni_df.empty else 0
+    n_pend   = int((uni_df["data_status"] == "pending").sum()) if not uni_df.empty else 0
+    _u_groups = uni_df["universe_group"].value_counts().to_dict() if not uni_df.empty else {}
+
+    _uc1, _uc2, _uc3, _uc4, _uc5 = st.columns(5)
+    _uc1.metric("Total tickers",      n_total)
+    _uc2.metric("Active",             n_active)
+    _uc3.metric("Data available",     n_avail)
+    _uc4.metric("Pending (no data)",  n_pend)
+    _uc5.metric("Universe groups",    len(_u_groups))
+
+    if _u_groups:
+        st.markdown("**Universe groups:**  " +
+                    "  |  ".join(f"**{g}**: {c}" for g, c in sorted(_u_groups.items())))
+
+    if uni_df.empty:
+        st.info("No tickers in universe yet. Run `python3 build_expanded_universe.py --limit 10` to start.")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 1: Expanded Universe Build Report
+    # ─────────────────────────────────────────────────────────────────────────
+    _build_report_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "expanded_universe_build_report.csv")
+    if os.path.exists(_build_report_path):
+        st.divider()
+        with st.expander("Expanded universe build report", expanded=False):
+            try:
+                _brdf = pd.read_csv(_build_report_path)
+                _br_avail = int((_brdf["final_data_status"] == "available").sum())
+                _br_pend  = int((_brdf["final_data_status"] == "pending").sum())
+                _br_fail  = int((_brdf["final_data_status"] == "failed").sum())
+                st.markdown(
+                    f"**{_br_avail} available** · {_br_pend} pending · {_br_fail} failed"
+                    f" (of {len(_brdf)} tickers processed)"
+                )
+                _br_show = _brdf[[c for c in [
+                    "ticker", "company_name", "final_data_status",
+                    "fundamentals_status", "market_cap_status", "model_output_status",
+                    "filing_10k_status", "failure_reason",
+                ] if c in _brdf.columns]]
+                st.dataframe(_br_show.reset_index(drop=True),
+                             use_container_width=True, hide_index=True)
+                st.download_button(
+                    "Download build report",
+                    data=_brdf.to_csv(index=False).encode("utf-8"),
+                    file_name="expanded_universe_build_report.csv",
+                    mime="text/csv",
+                    key="uni_dl_build_report",
+                )
+            except Exception as _e:
+                st.warning(f"Could not load build report: {_e}")
+    else:
+        st.caption(
+            "No build report found. Run `python3 build_expanded_universe.py --limit 10` "
+            "to start building the expanded universe, then `--resume` to continue."
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 2: Advanced — Add custom tickers (collapsed)
+    # ─────────────────────────────────────────────────────────────────────────
+    st.divider()
+    with st.expander("Advanced: Add custom tickers", expanded=False):
+        st.caption(
+            "Normal users do not need this. The expanded universe is pre-built offline. "
+            "Use this only to track a custom ticker not in the seed list."
+        )
+        st.markdown("##### Ticker Setup Wizard")
+
+        _wizard_raw = st.text_area(
+            "Enter tickers to add (comma, space, or newline-separated)",
+            placeholder="e.g.  NVDA, AMD\nINTC\nTSM",
+            height=80,
+            key="uni_wizard_input",
+        )
+
+        if st.button("Validate tickers", key="uni_wizard_validate_btn"):
+            if not _wizard_raw.strip():
+                st.warning("Enter at least one ticker symbol.")
+            else:
+                _results = validate_tickers_for_wizard(_wizard_raw)
+                st.session_state["_wizard_validation_results"] = _results
+
+        _val_results = st.session_state.get("_wizard_validation_results", [])
+        if _val_results:
+            _vdf = pd.DataFrame(_val_results)[
+                ["ticker", "company_name", "cik", "already_in_universe",
+                 "validation_status", "warning"]
+            ]
+            st.dataframe(_vdf.reset_index(drop=True), use_container_width=True, hide_index=True)
+
+            _addable = [r for r in _val_results
+                        if r["valid"] and not r["already_in_universe"]]
+            if _addable:
+                st.caption(f"{len(_addable)} ticker(s) ready to add.")
+                if st.button("Add valid tickers to universe", key="uni_wizard_add_btn",
+                             type="primary"):
+                    _to_add = [r["ticker"] for r in _addable]
+                    _added, _skipped, _msg = expand_universe_for_tickers(_to_add)
+                    if _added > 0:
+                        st.success(_msg)
+                    else:
+                        st.info(_msg)
+                    st.session_state.pop("_wizard_validation_results", None)
+                    st.rerun()
+            else:
+                st.info("No new valid tickers to add (all invalid or already in universe).")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 3: Data Readiness Dashboard (custom/pending only)
+    # ─────────────────────────────────────────────────────────────────────────
+    _work_df = uni_df[
+        uni_df["data_status"].isin(["pending", "failed"]) |
+        (uni_df["universe_group"] == "custom")
+    ] if not uni_df.empty else pd.DataFrame()
+
+    if not _work_df.empty:
+        st.divider()
+        with st.expander(
+            f"Custom ticker readiness ({len(_work_df)} pending/custom tickers)",
+            expanded=True,
+        ):
+            st.caption(
+                "These tickers were added via the Advanced wizard and do not yet have model outputs. "
+                "Use the pipeline runner below to generate data, or run the batch script offline."
+            )
+            _dash_rows = []
+            for _, _u_row in _work_df.iterrows():
+                _t = str(_u_row["ticker"]).upper()
+                _r = check_ticker_readiness(_t)
+                def _badge(ok: bool) -> str:
+                    return "✅" if ok else "❌"
+                _label = "Ready" if _r["ready_for_screener"] else (
+                    "Missing model output" if not _r["has_fundamentals"] else
+                    "Missing market cap"   if not _r["has_market_cap"] else
+                    "Pending pipeline"
+                )
+                _dash_rows.append({
+                    "Ticker":        _t,
+                    "Company":       str(_u_row.get("company_name", "")).strip() or "—",
+                    "Ready":         _label,
+                    "Fundamentals":  _badge(_r["has_fundamentals"]),
+                    "Market cap":    _badge(_r["has_market_cap"]),
+                    "Model output":  _badge(_r["has_model_output"]),
+                    "10-K risk":     _badge(_r["has_10k_risk"]),
+                    "10-Q risk":     _badge(_r["has_10q_risk"]),
+                    "Current mkt":   _badge(_r["has_current_market"]),
+                    "Warnings":      "; ".join(_r["warnings"]) or "",
+                })
+            st.dataframe(
+                pd.DataFrame(_dash_rows).reset_index(drop=True),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 4: Controlled Pipeline Runner (custom/pending tickers only)
+    # ─────────────────────────────────────────────────────────────────────────
+    _pipeline_candidates = uni_df[
+        uni_df["data_status"].isin(["pending", "failed"])
+    ] if not uni_df.empty else pd.DataFrame()
+
+    if not _pipeline_candidates.empty:
+        st.divider()
+        st.markdown("#### Run pipeline for custom tickers")
+        st.caption(
+            "For custom tickers added via the wizard above. "
+            "The expanded 100-company universe is built offline — normal users do not need this. "
+            "Each step runs individually; failures do not affect other tickers."
+        )
+
+        _pipe_ticker_opts = sorted(_pipeline_candidates["ticker"].str.upper().unique().tolist())
+        _sel_tickers = st.multiselect(
+            "Select tickers to process",
+            options=_pipe_ticker_opts,
+            default=[],
+            key="uni_pipe_tickers",
+        )
+
+        st.markdown("**Pipeline steps to run:**")
+        _pc1, _pc2, _pc3 = st.columns(3)
+        _step_facts  = _pc1.checkbox("Fetch SEC company facts",          value=True,  key="uni_step_facts")
+        _step_mc     = _pc1.checkbox("Fetch market cap / current price", value=True,  key="uni_step_mc")
+        _step_model  = _pc2.checkbox("Generate model output",            value=True,  key="uni_step_model")
+        _step_10k    = _pc2.checkbox("Fetch annual 10-K filing risk",    value=False, key="uni_step_10k")
+        _step_10q    = _pc3.checkbox("Fetch latest 10-Q risk",           value=False, key="uni_step_10q")
+        _step_currmkt = _pc3.checkbox("Refresh current market snapshot", value=True,  key="uni_step_currmkt")
+
+        _any_step = any([_step_facts, _step_mc, _step_model,
+                         _step_10k, _step_10q, _step_currmkt])
+
+        if st.button(
+            "Run selected pipeline steps",
+            key="uni_pipe_run_btn",
+            type="primary",
+            disabled=(not _sel_tickers or not _any_step),
+        ):
+            if not _sel_tickers:
+                st.warning("Select at least one ticker.")
+            elif not _any_step:
+                st.warning("Select at least one pipeline step.")
+            else:
+                # Build CIK map for selected tickers
+                _cik_map: dict = {}
+                for _, _u_row in _pipeline_candidates.iterrows():
+                    _t2 = str(_u_row["ticker"]).upper()
+                    _cik_map[_t2] = str(_u_row.get("cik", "")).strip()
+
+                _total_ok   = 0
+                _total_fail = 0
+
+                for _t in _sel_tickers:
+                    _cik = _cik_map.get(_t, "")
+                    st.markdown(f"**{_t}**")
+                    _msg_lines = []
+
+                    if _step_facts:
+                        with st.spinner(f"{_t}: fetching SEC company facts…"):
+                            _ok, _m = prepare_single_ticker_fundamentals(_t, _cik)
+                        (_msg_lines.append(f"✅ {_m}") if _ok else _msg_lines.append(f"❌ {_m}"))
+                        if _ok:
+                            _total_ok += 1
+                        else:
+                            _total_fail += 1
+
+                    if _step_mc:
+                        with st.spinner(f"{_t}: fetching market cap data…"):
+                            _ok, _m = prepare_single_ticker_market_cap(_t, _cik)
+                        (_msg_lines.append(f"✅ {_m}") if _ok else _msg_lines.append(f"❌ {_m}"))
+                        if _ok:
+                            _total_ok += 1
+                        else:
+                            _total_fail += 1
+
+                    if _step_model:
+                        with st.spinner(f"{_t}: generating model output (rebuilds all tickers)…"):
+                            _ok, _m = prepare_single_ticker_model_output(_t)
+                        (_msg_lines.append(f"✅ {_m}") if _ok else _msg_lines.append(f"❌ {_m}"))
+                        if _ok:
+                            _total_ok += 1
+                        else:
+                            _total_fail += 1
+
+                    if _step_10k:
+                        with st.spinner(f"{_t}: fetching 10-K filing risk…"):
+                            _ok, _m = prepare_single_ticker_10k_risk(_t, _cik)
+                        (_msg_lines.append(f"✅ {_m}") if _ok else _msg_lines.append(f"❌ {_m}"))
+                        if _ok:
+                            _total_ok += 1
+                        else:
+                            _total_fail += 1
+
+                    if _step_10q:
+                        with st.spinner(f"{_t}: fetching latest 10-Q risk…"):
+                            _ok, _m = prepare_single_ticker_10q_risk(_t, _cik)
+                        (_msg_lines.append(f"✅ {_m}") if _ok else _msg_lines.append(f"❌ {_m}"))
+                        if _ok:
+                            _total_ok += 1
+                        else:
+                            _total_fail += 1
+
+                    if _step_currmkt:
+                        with st.spinner(f"{_t}: refreshing market snapshot…"):
+                            _ok, _m = prepare_single_ticker_current_market(_t)
+                        (_msg_lines.append(f"✅ {_m}") if _ok else _msg_lines.append(f"❌ {_m}"))
+                        if _ok:
+                            _total_ok += 1
+                        else:
+                            _total_fail += 1
+
+                    # Promote if now ready
+                    _promoted, _promo_msg = promote_ticker_if_ready(_t)
+                    if _promoted:
+                        _msg_lines.append(f"🟢 {_promo_msg}")
+
+                    for _line in _msg_lines:
+                        st.markdown(_line)
+
+                st.markdown("---")
+                if _total_fail == 0:
+                    st.success(f"Pipeline complete: {_total_ok} steps succeeded.")
+                else:
+                    st.warning(
+                        f"Pipeline done: {_total_ok} succeeded, {_total_fail} failed. "
+                        "See details above."
+                    )
+                st.rerun()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 5: Browse full universe
+    # ─────────────────────────────────────────────────────────────────────────
+    if not uni_df.empty:
+        st.divider()
+        with st.expander("Browse full universe", expanded=False):
+            _filter_grp = st.selectbox(
+                "Filter by group",
+                ["All"] + sorted(_u_groups.keys()),
+                key="uni_filter_grp",
+            )
+            _filter_status = st.selectbox(
+                "Filter by data status",
+                ["All", "available", "pending", "failed"],
+                key="uni_filter_status",
+            )
+            _view = uni_df.copy()
+            if _filter_grp != "All":
+                _view = _view[_view["universe_group"] == _filter_grp]
+            if _filter_status != "All":
+                _view = _view[_view["data_status"] == _filter_status]
+            # Show core columns + pipeline status columns
+            _show_cols = [c for c in [
+                "ticker", "company_name", "sector", "universe_group",
+                "data_status", "model_output_status", "company_facts_status",
+                "filing_10k_status", "filing_10q_status", "last_pipeline_run",
+                "failure_reason",
+            ] if c in _view.columns]
+            st.dataframe(
+                _view[_show_cols].reset_index(drop=True),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        # ── Download ─────────────────────────────────────────────────────────
+        st.download_button(
+            "Download ticker_universe.csv",
+            data=uni_df.to_csv(index=False).encode("utf-8"),
+            file_name="ticker_universe.csv",
+            mime="text/csv",
+            key="uni_dl_btn",
+        )
+        st.caption(
+            "You can also edit ticker_universe.csv manually. "
+            "Set data_status='available' only after model outputs exist for that ticker."
+        )
+
+
 def page_about() -> None:
     st.markdown("""
     <div class="about-hero">
@@ -5203,8 +5921,9 @@ def page_about() -> None:
     </div>
     """, unsafe_allow_html=True)
 
-    tab_ov, tab_how, tab_meth, tab_bm, tab_diag = st.tabs(
-        ["Overview", "How It Works", "Methodology", "Benchmark Comparison", "Model Diagnostics"]
+    tab_ov, tab_how, tab_meth, tab_bm, tab_diag, tab_uni = st.tabs(
+        ["Overview", "How It Works", "Methodology", "Benchmark Comparison",
+         "Model Diagnostics", "Ticker Universe"]
     )
 
     with tab_ov:
@@ -5316,6 +6035,9 @@ def page_about() -> None:
 
     with tab_diag:
         page_model_diagnostics()
+
+    with tab_uni:
+        _render_ticker_universe_tab()
 
 
 # ════════════════════════════════════════════════════════════════════════════

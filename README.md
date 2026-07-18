@@ -261,6 +261,111 @@ under "Validation Comparison".
 
 ---
 
+## Expanded Universe (100+ Companies)
+
+The app ships with a **118-ticker seed list** (`expanded_ticker_seed.csv`) covering
+Technology, Financials, Healthcare, Consumer, Industrials, Energy, and more.
+Running the batch build script populates model outputs for all of them so
+they appear immediately in the Screener — no per-ticker setup needed.
+
+### Three universe states
+
+| State | Meaning |
+|---|---|
+| **Seed** | Listed in `expanded_ticker_seed.csv` — target universe, no data yet |
+| **Pending** | Added to `ticker_universe.csv` but model outputs not yet generated |
+| **Available** | Full pipeline completed — appears in Screener with research signals |
+
+The app never fetches data on startup. All data is pre-built offline and committed
+as CSV files.
+
+### How to build the expanded universe
+
+```bash
+# Test run — first 5 tickers only (~5–10 min)
+python3 build_expanded_universe.py --limit 5
+
+# Medium batch — first 25 tickers (good smoke test, ~25–40 min)
+python3 build_expanded_universe.py --limit 25
+
+# Resume after a crash or interruption
+python3 build_expanded_universe.py --resume
+
+# Skip filing risk and 10-Q (faster; add those in a second pass)
+python3 build_expanded_universe.py --limit 50 --skip-filings --skip-10q
+
+# Specific tickers only
+python3 build_expanded_universe.py --tickers AAPL MSFT NVDA
+
+# Full 118-ticker run (plan on ~2–4 hours; dominated by SEC filing fetches)
+python3 build_expanded_universe.py
+
+# Check what would run without executing
+python3 build_expanded_universe.py --dry-run
+```
+
+### What the build script does
+
+1. Loads `expanded_ticker_seed.csv`
+2. Resolves missing CIKs from SEC's `company_tickers.json`
+3. Fetches SEC EDGAR company facts per ticker (cached after first fetch)
+4. Extracts annual fundamentals 2017–2024
+5. Fetches yfinance market cap history
+6. Rebuilds Ridge Regression model outputs on full dataset
+7. Runs calibration on combined outputs
+8. Runs incremental 10-K filing risk pipeline (uses existing cache)
+9. Runs latest 10-Q risk pipeline
+10. Refreshes current market snapshot
+11. Updates `ticker_universe.csv` with status per ticker
+12. Saves `expanded_universe_build_report.csv`
+
+Progress is saved after every ticker — a crash or `Ctrl-C` does not lose work.
+Re-run with `--resume` to continue from where it stopped.
+
+Backups of major CSVs are written to `backups/` before each model rebuild.
+
+### After the build
+
+```bash
+# Start the app — all available tickers appear in Screener immediately
+streamlit run app.py
+```
+
+Check **About → Ticker Universe** for the build report. Failed tickers include
+`failure_reason` in the report. Re-run with `--tickers <ticker> --force` to retry.
+
+### Troubleshooting failed tickers
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `SEC facts fetch failed` | Rate limit or bad CIK | Wait 60 s, re-run `--tickers X --force` |
+| `no annual rows extracted` | Company too new or foreign filer | Check SEC EDGAR manually |
+| `Training dataset empty` | No ok fundamentals in CSV | Ensure Phase 1 succeeded first |
+| `model absent from outputs` | Insufficient ok rows | Need ≥2 years of ok fundamental data |
+
+### Deploying after the expanded build
+
+Commit the updated CSV files (model outputs, risk scores, `ticker_universe.csv`,
+`expanded_universe_build_report.csv`) and push. The app reads these files at
+startup — no pipeline runs on the server.
+
+```bash
+git add model_outputs_combined_calibrated_risk.csv \
+        model_outputs_combined_calibrated.csv \
+        model_outputs_combined.csv \
+        modern_fundamentals.csv \
+        modern_market_cap_data.csv \
+        filing_risk_scores.csv \
+        latest_10q_risk_scores.csv \
+        current_market_data.csv \
+        ticker_universe.csv \
+        expanded_universe_build_report.csv
+git commit -m "Add expanded 100+ company universe"
+git push
+```
+
+---
+
 ## Quick Start
 
 ```bash
