@@ -1,4 +1,4 @@
 model_output_source,era,rows,mean_actual_mc_B,mean_estimated_fv_B,mean_valuation_gap_pct,median_valuation_gap_pct,mean_abs_model_error,rmse_model_error,dominant_orig_signal,dominant_orig_signal_pct,dominant_cal_signal,dominant_cal_signal_pct,orig_concentration_warning,cal_concentration_warning
 legacy_xbrl_2010_2016,legacy_2010_2016,137,54.22,47.09,623.93,-11.85,0.4908,0.8033,Potentially overvalued,51.1,Potentially overvalued,32.8,no,no
-modern_sec_facts_2017_current,modern_2017_2020,112,158.17,117.61,-0.19,-11.35,0.3388,0.4556,Potentially overvalued,52.7,Potentially overvalued,37.5,no,no
-modern_sec_facts_2017_current,modern_2021_2024,112,316.89,244.72,-5.78,-13.16,0.3039,0.4008,Potentially overvalued,52.7,Potentially overvalued,38.4,no,no
+modern_sec_facts_2017_current,modern_2017_2020,437,125.06,116.52,11.89,6.98,0.2792,0.3557,Potentially overvalued,30.9,Potentially overvalued,38.9,no,no
+modern_sec_facts_2017_current,modern_2021_2024,435,220.01,181.91,0.53,-5.8,0.2785,0.3933,Potentially overvalued,43.4,Potentially overvalued,37.7,no,no

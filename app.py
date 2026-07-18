@@ -308,7 +308,7 @@ st.markdown("""
     margin-bottom: 6px;
     display: flex;
     flex-direction: column;
-    min-height: 300px;
+    height: 340px;
 }
 .cta-card:hover {
     box-shadow: 0 8px 24px rgba(37,99,235,0.13);
@@ -319,6 +319,7 @@ st.markdown("""
     flex: 1;
     display: flex;
     flex-direction: column;
+    min-height: 0;
 }
 
 /* ── Home CTA anchor cards (kept for query-param sidebar links, not used for card HTML) */
@@ -387,7 +388,8 @@ st.markdown("""
     border-radius: 8px;
     padding: 10px 12px;
     flex: 1;
-    min-height: 120px;
+    min-height: 0;
+    overflow: hidden;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -421,11 +423,16 @@ if "pending_nav_page" in st.session_state:
 else:
     try:
         _qp_nav = st.query_params.get("nav", None)
+        _qp_tab = st.query_params.get("portfolio_tab", None)
+        _qp_consumed = False
         if _qp_nav and _qp_nav in PAGES:
             st.session_state.nav_page = _qp_nav
-        _qp_tab = st.query_params.get("portfolio_tab", None)
+            _qp_consumed = True
         if _qp_tab:
             st.session_state["portfolio_tab"] = _qp_tab
+            _qp_consumed = True
+        if _qp_consumed:
+            st.query_params.clear()
     except Exception:
         pass
 
@@ -1081,19 +1088,24 @@ def page_home() -> None:
                 _rpl_inner = (
                     '<div style="font-size:10px;color:#64748b;margin-bottom:5px;font-weight:600;'
                     'text-transform:uppercase;letter-spacing:0.5px">Signal coverage</div>'
-                    '<svg width="100%" height="32" viewBox="0 0 240 32" '
-                    'style="display:block;margin-bottom:8px;overflow:visible">'
+                    '<svg width="100%" height="50" viewBox="0 0 240 50" '
+                    'style="display:block;margin-bottom:10px;overflow:visible">'
                     '<defs><linearGradient id="sparkgrad" x1="0" y1="0" x2="1" y2="0">'
                     '<stop offset="0%" stop-color="#bfdbfe"/>'
-                    '<stop offset="100%" stop-color="#2563eb"/></linearGradient></defs>'
-                    '<polyline points="0,28 48,22 96,16 144,10 192,6 240,2" fill="none" '
+                    '<stop offset="100%" stop-color="#2563eb"/></linearGradient>'
+                    '<linearGradient id="sparkfill" x1="0" y1="0" x2="0" y2="1">'
+                    '<stop offset="0%" stop-color="#2563eb" stop-opacity="0.12"/>'
+                    '<stop offset="100%" stop-color="#2563eb" stop-opacity="0"/></linearGradient></defs>'
+                    '<polygon points="0,46 48,38 96,28 144,18 192,10 240,4 240,50 0,50" '
+                    'fill="url(#sparkfill)"/>'
+                    '<polyline points="0,46 48,38 96,28 144,18 192,10 240,4" fill="none" '
                     'stroke="url(#sparkgrad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>'
-                    '<circle cx="240" cy="2" r="3.5" fill="#2563eb"/>'
+                    '<circle cx="240" cy="4" r="4" fill="#2563eb"/>'
                     '</svg>'
-                    f'<table style="font-size:11px;color:#334155;border-spacing:0 2px;width:100%">'
-                    f'<tr><td style="color:#64748b;padding-right:10px">Years</td><td><b>{yr_range}</b></td>'
+                    f'<table style="font-size:11px;color:#334155;border-spacing:0 4px;width:100%">'
+                    f'<tr><td style="color:#64748b;padding-right:10px;padding-bottom:2px">Years</td><td><b>{yr_range}</b></td>'
                     f'<td style="color:#64748b;padding-left:12px;padding-right:6px">Companies</td><td><b>{n_cos}</b></td></tr>'
-                    f'<tr><td style="color:#64748b">Benchmarks</td><td colspan="3"><b>SPY · QQQ · Cash</b></td></tr>'
+                    f'<tr><td style="color:#64748b;padding-bottom:2px">Benchmarks</td><td colspan="3"><b>SPY · QQQ · Cash</b></td></tr>'
                     f'<tr><td style="color:#64748b">Holding</td><td colspan="3"><b>1 month – 10 years · exact-date entry</b></td></tr>'
                     f'</table>'
                 )
@@ -1527,10 +1539,10 @@ def page_screener(df: pd.DataFrame) -> None:
             desired.insert(desired.index("Final_Signal") + 1, "valuation_bucket_year")
         if _risk_col in fdf.columns:
             desired.append(_risk_col)
-        if "output_quality_flag" in fdf.columns:
-            desired.append("output_quality_flag")
         if show_10q_risk and "latest_10q_risk_score" in fdf.columns and fdf["latest_10q_risk_score"].notna().any():
             desired += ["latest_10q_risk_score", "filing_risk_trend"]
+        if "output_quality_flag" in fdf.columns:
+            desired.append("output_quality_flag")
         if "current_price" in fdf.columns:
             desired += ["current_price", "daily_change_pct"]
         col_rename = {
@@ -1570,42 +1582,150 @@ def page_screener(df: pd.DataFrame) -> None:
     if "Current Gap %"       in display.columns: display["Current Gap %"]       = display["Current Gap %"].map(_fmt_pct)
     if "Daily Chg %"         in display.columns: display["Daily Chg %"]         = display["Daily Chg %"].map(_fmt_pct)
     if "Live Price"          in display.columns: display["Live Price"]          = display["Live Price"].map(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
-    if "Filing Risk"         in display.columns: display["Filing Risk"]         = display["Filing Risk"].map(lambda x: f"{x:.0f}/100" if pd.notna(x) else "—")
-    if "10-Q Risk"           in display.columns: display["10-Q Risk"]           = display["10-Q Risk"].map(lambda x: f"{x:.0f}/100" if pd.notna(x) else "—")
     if "Market Price ($)"    in display.columns: display["Market Price ($)"]    = display["Market Price ($)"].map("${:.2f}".format)
     if "Est. Fair Value ($)" in display.columns: display["Est. Fair Value ($)"] = display["Est. Fair Value ($)"].map("${:.2f}".format)
     if "Valuation Gap (%)"   in display.columns: display["Valuation Gap (%)"]   = display["Valuation Gap (%)"].map(_fmt_pct)
 
-    def _style_signal(val):
-        bg = SIGNAL_BG_COLORS.get(val, "#fff")
-        fg = SIGNAL_COLORS.get(val, "#000")
-        return f"background-color:{bg}; color:{fg}; font-weight:600"
+    def _gap_label(v):
+        try: v = float(v)
+        except: return "N/A"
+        s = "+" if v >= 0 else ""
+        if   v > 20:   desc = "High"
+        elif v > 5:    desc = "Favorable"
+        elif v >= -5:  desc = "Neutral"
+        elif v >= -20: desc = "Stretched"
+        else:          desc = "Deep Stretched"
+        return f"{s}{v:.1f}% | {desc}"
 
-    def _style_gap(val):
-        try:
-            raw = float(str(val).replace("%", "").replace("+", ""))
-        except (ValueError, TypeError):
-            return ""
-        if raw > 10:  return "color:#27ae60; font-weight:600"
-        if raw < -10: return "color:#e74c3c; font-weight:600"
-        return "color:#f39c12; font-weight:600"
+    def _risk_label(v):
+        try: v = float(v)
+        except: return "N/A"
+        if   v < 30: level = "Low"
+        elif v < 50: level = "Moderate"
+        elif v < 70: level = "Elevated"
+        else:        level = "High"
+        return f"{v:.0f}/100 | {level}"
 
-    # Prefer current gap column for styling when toggle is on and data available
-    if use_xbrl and use_current_gap and "Current Gap %" in display.columns:
-        gap_col = "Current Gap %"
-    elif use_xbrl:
-        gap_col = "Model Gap %"
-    else:
-        gap_col = "Valuation Gap (%)"
-    try:
-        styler = display.style
-        styler = _safe_map(styler, _style_signal, "Signal")
-        styler = _safe_map(styler, _style_gap, gap_col)
-        styler = styler.set_properties(**{"font-size": "13px"})
-        st.dataframe(styler, use_container_width=True, hide_index=True, height=360)
-    except Exception as exc:
-        st.warning(f"Table styling unavailable ({exc}). Showing plain table.")
-        st.dataframe(display, use_container_width=True, hide_index=True, height=360)
+    def _quality_label(v):
+        try: v = float(v)
+        except: return "N/A"
+        return f"{v:.0f}/100"
+
+    def _trend_label(v):
+        s = str(v).strip().lower() if pd.notna(v) else ""
+        if   "decr" in s: return "Decreasing"
+        elif "incr" in s: return "Increasing"
+        elif "stab" in s: return "Stable"
+        elif s:           return s.title()
+        return "Unavailable"
+
+    _dq_disp = {
+        "needs_review":        "Needs Review",
+        "neutral_report_risk": "Neutral Report Risk",
+        "clean":               "Clean",
+        "ok":                  "Clean",
+    }
+    _sig_disp = {
+        "High-priority research candidate": "High-Priority Candidate",
+        "Research candidate":               "Research Candidate",
+        "Fairly valued / neutral":          "Fairly Valued",
+        "Potentially overvalued":           "Potentially Overvalued",
+        "Possible value trap":              "Value Trap",
+    }
+    _vb_disp = {
+        "top decile relative value":     "Top Decile",
+        "above-average relative value":  "Above Average",
+        "neutral relative value":        "Neutral",
+        "below-average relative value":  "Below Average",
+        "low relative value":            "Low",
+    }
+
+    # Gap columns — enriched labels from raw fdf
+    if "Model Gap %"   in display.columns and "Valuation_Gap_Pct"         in fdf.columns:
+        display["Model Gap %"]   = fdf["Valuation_Gap_Pct"].map(_gap_label)
+    if "Current Gap %" in display.columns and "current_valuation_gap_pct" in fdf.columns:
+        display["Current Gap %"] = fdf["current_valuation_gap_pct"].map(
+            lambda v: _gap_label(v) if pd.notna(v) else "N/A")
+
+    # Risk / quality — text labels (no ProgressColumn)
+    if "Filing Risk" in display.columns:
+        display["Filing Risk"] = display["Filing Risk"].map(_risk_label)
+    if "10-Q Risk"   in display.columns:
+        display["10-Q Risk"]   = display["10-Q Risk"].map(_risk_label)
+    if "Quality"     in display.columns:
+        display["Quality"]     = display["Quality"].map(_quality_label)
+
+    # Text columns — normalize labels
+    if "Risk Trend"   in display.columns and "filing_risk_trend" in fdf.columns:
+        display["Risk Trend"]   = fdf["filing_risk_trend"].map(_trend_label)
+    if "Data Quality" in display.columns:
+        display["Data Quality"] = display["Data Quality"].map(
+            lambda v: _dq_disp.get(str(v).strip().lower(), str(v).strip().title()) if pd.notna(v) else "—")
+    if "Signal"       in display.columns:
+        display["Signal"]       = display["Signal"].map(
+            lambda v: _sig_disp.get(str(v).strip(), str(v).strip()) if pd.notna(v) else "—")
+    if "Value Bucket" in display.columns:
+        display["Value Bucket"] = display["Value Bucket"].map(
+            lambda v: _vb_disp.get(str(v).strip().lower(), str(v).strip().title()) if pd.notna(v) else "—")
+
+    _col_cfg = {}
+    if "Ticker"         in display.columns: _col_cfg["Ticker"]         = st.column_config.TextColumn("Ticker",       width="small")
+    if "Company"        in display.columns: _col_cfg["Company"]        = st.column_config.TextColumn("Company",      width="medium")
+    if "Model Yr"       in display.columns: _col_cfg["Model Yr"]       = st.column_config.NumberColumn("Yr",          format="%d",  width="small")
+    if "Model MC (B)"   in display.columns: _col_cfg["Model MC (B)"]   = st.column_config.TextColumn("Model MC",     width="small")
+    if "Live MC (B)"    in display.columns: _col_cfg["Live MC (B)"]    = st.column_config.TextColumn("Live MC",      width="small")
+    if "Est. Value (B)" in display.columns: _col_cfg["Est. Value (B)"] = st.column_config.TextColumn("Est. Val.",    width="small")
+    if "Model Gap %"    in display.columns: _col_cfg["Model Gap %"]    = st.column_config.TextColumn("Model Gap",    width="medium")
+    if "Current Gap %"  in display.columns: _col_cfg["Current Gap %"]  = st.column_config.TextColumn("Current Gap",  width="medium")
+    if "Quality"        in display.columns: _col_cfg["Quality"]        = st.column_config.TextColumn("Quality",      width="small")
+    if "Signal"         in display.columns: _col_cfg["Signal"]         = st.column_config.TextColumn("Signal",       width="medium")
+    if "Value Bucket"   in display.columns: _col_cfg["Value Bucket"]   = st.column_config.TextColumn("Val. Bucket",  width="medium")
+    if "Filing Risk"    in display.columns: _col_cfg["Filing Risk"]    = st.column_config.TextColumn("10-K Risk",    width="medium")
+    if "10-Q Risk"      in display.columns: _col_cfg["10-Q Risk"]      = st.column_config.TextColumn("10-Q Risk",    width="medium")
+    if "Risk Trend"     in display.columns: _col_cfg["Risk Trend"]     = st.column_config.TextColumn("Trend",        width="medium")
+    if "Data Quality"   in display.columns: _col_cfg["Data Quality"]   = st.column_config.TextColumn("Data Quality", width="medium")
+    if "Live Price"     in display.columns: _col_cfg["Live Price"]     = st.column_config.TextColumn("Price",        width="small")
+    if "Daily Chg %"    in display.columns: _col_cfg["Daily Chg %"]    = st.column_config.TextColumn("Daily Chg",    width="small")
+
+    # ── Label maps built BEFORE table so we can sync the dropdown key atomically ──
+    visible_tickers = fdf["Ticker"].dropna().astype(str).tolist()
+    if visible_tickers:
+        _co_map          = fdf.set_index("Ticker")["Company_Name"].to_dict()
+        _ticker_to_label = {t: f"{t} — {_co_map.get(t, t)}" for t in visible_tickers}
+        _label_to_ticker = {v: k for k, v in _ticker_to_label.items()}
+        visible_labels   = [_ticker_to_label[t] for t in visible_tickers]
+
+        # Canonical state — reset both keys + clear stale table selection when ticker falls out of view
+        if st.session_state.get("screener_selected_ticker") not in visible_tickers:
+            _reset_t = visible_tickers[0]
+            st.session_state["screener_selected_ticker"]              = _reset_t
+            st.session_state["screener_selected_company_dropdown"]    = _ticker_to_label[_reset_t]
+            st.session_state["_screener_tbl_gen"]                     = st.session_state.get("_screener_tbl_gen", 0) + 1
+
+        st.caption("Click a row to inspect that company below.  Display labels are research context, not investment advice.")
+
+    # Generation-keyed table: incrementing the key resets visual selection state
+    _tbl_key = f"screener_results_table_{st.session_state.get('_screener_tbl_gen', 0)}"
+    event = st.dataframe(
+        display,
+        use_container_width=True,
+        hide_index=True,
+        height=360,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=_tbl_key,
+        column_config=_col_cfg,
+    )
+
+    # Row-click → update BOTH canonical keys, then rerun so dropdown rebuilds with correct index
+    if visible_tickers:
+        _sel_rows = getattr(event.selection, "rows", []) if event else []
+        if _sel_rows and 0 <= _sel_rows[0] < len(visible_tickers):
+            _clicked = visible_tickers[_sel_rows[0]]
+            if st.session_state["screener_selected_ticker"] != _clicked:
+                st.session_state["screener_selected_ticker"]           = _clicked
+                st.session_state["screener_selected_company_dropdown"] = _ticker_to_label[_clicked]
+                st.rerun()
 
     # CSV download
     st.download_button(
@@ -1634,8 +1754,6 @@ def page_screener(df: pd.DataFrame) -> None:
     st.divider()
 
     # ── Company selection + preview panel ────────────────────────────────────
-    visible_tickers = fdf["Ticker"].dropna().astype(str).tolist()
-
     if not visible_tickers:
         st.warning("No companies match the current filters.")
         # If the search matches a pending ticker in universe, show a helpful note
@@ -1664,34 +1782,29 @@ def page_screener(df: pd.DataFrame) -> None:
             "Pending tickers are tracked in **About → Ticker Universe**."
         )
     else:
-        # Validate session state — reset to first visible if stale
-        if st.session_state.get("screener_selected_ticker") not in visible_tickers:
-            st.session_state["screener_selected_ticker"] = visible_tickers[0]
-
-        # Build label map: ticker → "TICKER — Company Name"
-        _co_map = fdf.set_index("Ticker")["Company_Name"].to_dict()
-        _ticker_to_label = {t: f"{t} — {_co_map.get(t, t)}" for t in visible_tickers}
-        _label_to_ticker = {v: k for k, v in _ticker_to_label.items()}
-        visible_labels   = [_ticker_to_label[t] for t in visible_tickers]
-
+        # Label maps already built in the pre-table block above.
         c1, c2, c3 = st.columns([4, 1, 1])
         with c1:
-            sel_label = st.selectbox(
+            chosen_label = st.selectbox(
                 "Select a company to inspect:",
                 options=visible_labels,
-                index=visible_tickers.index(st.session_state["screener_selected_ticker"]),
-                key="screener_company_sel",
+                key="screener_selected_company_dropdown",
             )
-        chosen = _label_to_ticker[sel_label]
-        # Sync both canonical keys immediately so buttons and downstream pages agree
-        st.session_state["screener_selected_ticker"] = chosen
-        st.session_state.selected_ticker             = chosen
+        _dropdown_ticker = _label_to_ticker[chosen_label]
+        if _dropdown_ticker != st.session_state["screener_selected_ticker"]:
+            # Dropdown changed — update canonical state and reset table visual selection
+            st.session_state["screener_selected_ticker"] = _dropdown_ticker
+            st.session_state["_screener_tbl_gen"]        = st.session_state.get("_screener_tbl_gen", 0) + 1
+            st.rerun()
+        chosen = st.session_state["screener_selected_ticker"]
+        st.session_state.selected_ticker = chosen
 
         with c2:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("View Details", type="primary", use_container_width=True, key="screener_view_detail"):
-                st.session_state.detail_source    = "xbrl" if use_xbrl else "sample"
-                st.session_state.pending_nav_page = "Company Detail"
+                st.session_state.detail_source          = "xbrl" if use_xbrl else "sample"
+                st.session_state.pending_nav_page        = "Company Detail"
+                st.session_state["_scroll_to_top"]       = True
                 st.rerun()
         with c3:
             st.markdown("<br>", unsafe_allow_html=True)
@@ -1742,6 +1855,79 @@ def page_screener(df: pd.DataFrame) -> None:
         st.markdown(signal_badge_html(_show_sig), unsafe_allow_html=True)
         if _risk_adj and _risk_adj not in ("", "nan") and _risk_adj != _sig_disp:
             st.caption(f"Risk-adjusted signal. Original calibrated: {_sig_disp}")
+
+        # Colored context badges (gap, risk, trend, data quality)
+        if use_xbrl:
+            _bp = []
+            _gv_raw = row.get("current_valuation_gap_pct")
+            if not pd.notna(_gv_raw):
+                _gv_raw = row.get("Valuation_Gap_Pct")
+            if pd.notna(_gv_raw):
+                _gv = float(_gv_raw)
+                if _gv > 20:   _gbg, _gfg, _gdesc = "#dbeafe", "#1d4ed8", "High"
+                elif _gv > 5:  _gbg, _gfg, _gdesc = "#eff6ff", "#2563eb", "Favorable"
+                elif _gv >= -5: _gbg, _gfg, _gdesc = "#f1f5f9", "#475569", "Neutral"
+                elif _gv >= -20: _gbg, _gfg, _gdesc = "#fff7ed", "#c2410c", "Stretched"
+                else:           _gbg, _gfg, _gdesc = "#fee2e2", "#b91c1c", "Deep Stretched"
+                _bp.append(
+                    f'<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;'
+                    f'font-weight:600;background:{_gbg};color:{_gfg};border:1px solid {_gfg};margin:2px 4px 2px 0">'
+                    f'<span style="font-weight:400;opacity:0.8">Gap: </span>{_gv:+.1f}% {_gdesc}</span>'
+                )
+            _fr_raw = row.get("report_risk_score_real")
+            if not pd.notna(_fr_raw):
+                _fr_raw = row.get("Report_Risk_Score")
+            if pd.notna(_fr_raw):
+                _frv = float(_fr_raw)
+                if _frv < 30:   _frbg, _frfg, _frlvl = "#dcfce7", "#15803d", "Low"
+                elif _frv < 50: _frbg, _frfg, _frlvl = "#fef9c3", "#a16207", "Moderate"
+                elif _frv < 70: _frbg, _frfg, _frlvl = "#ffedd5", "#c2410c", "Elevated"
+                else:           _frbg, _frfg, _frlvl = "#fee2e2", "#b91c1c", "High"
+                _bp.append(
+                    f'<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;'
+                    f'font-weight:600;background:{_frbg};color:{_frfg};border:1px solid {_frfg};margin:2px 4px 2px 0">'
+                    f'<span style="font-weight:400;opacity:0.8">10-K Risk: </span>{_frv:.0f}/100 {_frlvl}</span>'
+                )
+            _qr_raw = row.get("latest_10q_risk_score")
+            if pd.notna(_qr_raw):
+                _qrv = float(_qr_raw)
+                if _qrv < 30:   _qrbg, _qrfg, _qrlvl = "#dcfce7", "#15803d", "Low"
+                elif _qrv < 50: _qrbg, _qrfg, _qrlvl = "#fef9c3", "#a16207", "Moderate"
+                elif _qrv < 70: _qrbg, _qrfg, _qrlvl = "#ffedd5", "#c2410c", "Elevated"
+                else:           _qrbg, _qrfg, _qrlvl = "#fee2e2", "#b91c1c", "High"
+                _bp.append(
+                    f'<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;'
+                    f'font-weight:600;background:{_qrbg};color:{_qrfg};border:1px solid {_qrfg};margin:2px 4px 2px 0">'
+                    f'<span style="font-weight:400;opacity:0.8">10-Q Risk: </span>{_qrv:.0f}/100 {_qrlvl}</span>'
+                )
+            _tr_raw = row.get("filing_risk_trend", "")
+            if pd.notna(_tr_raw) and str(_tr_raw).strip():
+                _ts = str(_tr_raw).strip().lower()
+                if "decr" in _ts:   _tbg, _tfg, _tlbl = "#dcfce7", "#15803d", "Decreasing"
+                elif "incr" in _ts: _tbg, _tfg, _tlbl = "#fee2e2", "#b91c1c", "Increasing"
+                elif "stab" in _ts: _tbg, _tfg, _tlbl = "#f1f5f9", "#475569", "Stable"
+                else:               _tbg, _tfg, _tlbl = "#f1f5f9", "#475569", str(_tr_raw).strip().title()
+                _bp.append(
+                    f'<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;'
+                    f'font-weight:600;background:{_tbg};color:{_tfg};border:1px solid {_tfg};margin:2px 4px 2px 0">'
+                    f'<span style="font-weight:400;opacity:0.8">Trend: </span>{_tlbl}</span>'
+                )
+            _dq_raw = row.get("output_quality_flag", "")
+            if pd.notna(_dq_raw) and str(_dq_raw).strip():
+                _dqs = str(_dq_raw).strip().lower()
+                _dql_map = {"needs_review": "Needs Review", "neutral_report_risk": "Neutral Report Risk",
+                            "clean": "Clean", "ok": "Clean"}
+                _dql = _dql_map.get(_dqs, str(_dq_raw).strip().title())
+                if _dql == "Clean":                 _dqbg, _dqfg = "#dcfce7", "#15803d"
+                elif _dql == "Neutral Report Risk": _dqbg, _dqfg = "#fef9c3", "#a16207"
+                else:                               _dqbg, _dqfg = "#fee2e2", "#b91c1c"
+                _bp.append(
+                    f'<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;'
+                    f'font-weight:600;background:{_dqbg};color:{_dqfg};border:1px solid {_dqfg};margin:2px 4px 2px 0">'
+                    f'<span style="font-weight:400;opacity:0.8">Data Quality: </span>{_dql}</span>'
+                )
+            if _bp:
+                st.markdown('<div style="margin:8px 0 6px 0">' + "".join(_bp) + "</div>", unsafe_allow_html=True)
 
         _scr_wl_col, _ = st.columns([1, 3])
         with _scr_wl_col:
@@ -2423,6 +2609,31 @@ def _sample_company_detail(df: pd.DataFrame) -> None:
 
 
 def page_company_detail(df: pd.DataFrame) -> None:
+    if st.session_state.get("_scroll_to_top", False):
+        st.session_state["_scroll_to_top"] = False
+        import streamlit.components.v1 as _stv1
+        _stv1.html(
+            """<script>
+            (function(){
+                function doScroll(){
+                    try{
+                        ['[data-testid="stAppViewContainer"]',
+                         '[data-testid="stMain"]',
+                         'section.main', '.main',
+                         'body', 'html'
+                        ].forEach(function(s){
+                            var e=window.parent.document.querySelector(s);
+                            if(e){e.scrollTop=0;e.scrollLeft=0;}
+                        });
+                        window.parent.scrollTo(0,0);
+                    }catch(ex){}
+                }
+                doScroll();
+                [50,150,350,700].forEach(function(t){setTimeout(doScroll,t);});
+            })();
+            </script>""",
+            height=1,
+        )
     st.title("Company Detail")
     detail_src = st.session_state.get("detail_source", "sample")
     if detail_src == "xbrl" and mo_df is not None:

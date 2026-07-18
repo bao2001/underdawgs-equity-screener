@@ -311,12 +311,16 @@ def phase2_market_caps(todo: list, report: dict, force: bool) -> dict:
             pass
 
     # Load full fundamentals for shares lookup
-    all_fund_df, _ = load_modern_fundamentals()
+    all_fund_df, fund_msg = load_modern_fundamentals()
+    fund_df_arg = all_fund_df if isinstance(all_fund_df, pd.DataFrame) else pd.DataFrame()
+    if fund_df_arg.empty:
+        print(f"  Warning: no fundamentals available for shares lookup — "
+              f"market caps will use yfinance shares only ({fund_msg})")
 
     new_cik_df = pd.DataFrame(need_mc)
     print(f"  Fetching market cap data for {len(new_cik_df)} tickers…")
     new_mc_df = fetch_modern_market_caps(
-        new_cik_df, all_fund_df or pd.DataFrame(),
+        new_cik_df, fund_df_arg,
         target_years=MODERN_YEARS, verbose=True,
     )
 
