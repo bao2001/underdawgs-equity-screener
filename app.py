@@ -53,6 +53,11 @@ from model_utils import (
     COMPANY_DESCRIPTIONS, REPORT_SIGNALS,
     generate_benchmark_data, portfolio_metrics,
 )
+from auth_utils import (
+    is_authenticated, sign_in, sign_up, sign_out,
+    get_current_user, secrets_configured,
+    save_auth_cookies, clear_auth_cookies, restore_session_if_possible,
+)
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -71,79 +76,164 @@ st.markdown("""
 [data-testid="stDecoration"] { display: none !important; }
 [data-testid="stToolbar"]    { display: none !important; }
 
-/* ── Hide native Streamlit sidebar + collapse arrow completely ───────── */
-[data-testid="stSidebar"]             { display: none !important; }
-[data-testid="collapsedControl"]      { display: none !important; }
-[data-testid="stSidebarResizeHandle"] { display: none !important; }
-
-/* ── Custom fixed nav rail (independent of Streamlit sidebar) ────────── */
-.ud-nav-rail {
-    position: fixed;
-    left: 0; top: 0;
-    height: 100vh; width: 52px;
-    background: #14213d;
-    z-index: 9999; overflow: hidden;
-    transition: width 0.22s cubic-bezier(0.4,0,0.2,1);
-    box-shadow: 2px 0 12px rgba(0,0,0,0.28);
-}
-.ud-nav-rail:hover { width: 260px; }
-
-/* Nav item rows */
-.ud-nav-item {
-    display: flex; align-items: center;
-    padding: 2px 6px; margin: 1px 0; min-height: 44px;
-    border-radius: 8px; text-decoration: none !important;
-    color: inherit !important; transition: background 0.14s ease;
-}
-.ud-nav-item:hover {
-    background: rgba(37,99,235,0.28);
-    text-decoration: none !important;
-}
-.ud-nav-item-active {
-    display: flex; align-items: center;
-    padding: 2px 6px; margin: 1px 0; min-height: 44px;
-    border-radius: 8px; background: rgba(37,99,235,0.35);
+/* ── Remove Streamlit's reserved top spacing for the hidden header ─── */
+/* section[data-testid="stMain"] carries ~58px padding-top to clear the */
+/* Streamlit toolbar chrome.  stAppViewContainer / stMainBlockContainer  */
+/* may add further offsets.  Zero all three so the page starts flush.   */
+section[data-testid="stMain"],
+[data-testid="stAppViewContainer"],
+[data-testid="stMainBlockContainer"] {
+    padding-top: 0 !important;
+    margin-top: 0 !important;
 }
 
-/* Icon square — always visible */
-.ud-nav-icon {
-    width: 40px; min-width: 40px; height: 40px;
-    display: inline-flex; align-items: center; justify-content: center;
-    border-radius: 8px; flex-shrink: 0;
-    font-size: 12px; font-weight: 700; color: #c7d5ea;
-}
-.ud-nav-item-active .ud-nav-icon { background: #2563eb; color: #fff; }
-.ud-nav-item:hover .ud-nav-icon   { color: #fff; }
+/* ── Hide native Streamlit sidebar ─────────────────────────────────── */
+section[data-testid="stSidebar"],
+[data-testid="collapsedControl"],
+[data-testid="stSidebarResizeHandle"],
+[data-testid="stSidebarCollapseButton"] { display: none !important; }
 
-/* Label — hidden when collapsed, revealed on rail hover */
-.ud-nav-label {
-    font-size: 13px; font-weight: 500; color: #c7d5ea;
-    white-space: nowrap; margin-left: 10px;
-    opacity: 0; visibility: hidden; max-width: 0; overflow: hidden;
-    transition: opacity 0.14s ease, max-width 0.22s cubic-bezier(0.4,0,0.2,1), visibility 0s linear 0.22s;
-}
-.ud-nav-rail:hover .ud-nav-label {
-    opacity: 1; visibility: visible; max-width: 180px;
-    transition: opacity 0.14s ease 0.07s, max-width 0.22s cubic-bezier(0.4,0,0.2,1), visibility 0s;
-}
-.ud-nav-item-active .ud-nav-label { font-weight: 600; color: #e8edf5; }
-.ud-nav-item:hover .ud-nav-label  { color: #fff; }
-
-/* Brand/subtitle/footer text — same hide/show pattern */
-.ud-nav-text-hide {
-    opacity: 0; visibility: hidden; max-width: 0;
-    overflow: hidden; white-space: nowrap; display: inline-block;
-    transition: opacity 0.14s ease, max-width 0.22s cubic-bezier(0.4,0,0.2,1), visibility 0s linear 0.22s;
-}
-.ud-nav-rail:hover .ud-nav-text-hide {
-    opacity: 1; visibility: visible; max-width: 200px;
-    transition: opacity 0.14s ease 0.07s, max-width 0.22s cubic-bezier(0.4,0,0.2,1), visibility 0s;
+/* ── Collapse invisible top elements (CSS injection wrapper, CookieManager) ── */
+/* The CSS st.markdown and stx.CookieManager() both render as stElementContainer */
+/* direct children of block-container > stVerticalBlock, above the nav row.     */
+/* They contain no visible content but Streamlit gives them non-zero height.     */
+/* :has(style)  → targets the CSS injection markdown container                  */
+/* :has(iframe) → targets the CookieManager iframe-backed component             */
+.block-container > [data-testid="stVerticalBlock"]
+  > [data-testid="stElementContainer"]:has(style),
+.block-container > [data-testid="stVerticalBlock"]
+  > [data-testid="stElementContainer"]:has(iframe) {
+    height: 0 !important;
+    min-height: 0 !important;
+    max-height: 0 !important;
+    overflow: hidden !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 0 !important;
 }
 
-/* ── Offset main content so it starts after the 52px rail ───────────── */
+/* ── Top nav bar — sticky, white background ──────────────────────── */
+.block-container > [data-testid="stVerticalBlock"]
+  > [data-testid="stHorizontalBlock"]:first-of-type {
+    position: sticky !important;
+    top: 0 !important;
+    height: 92px !important;
+    min-height: 92px !important;
+    z-index: 9998 !important;
+    background: #ffffff !important;
+    gap: 0 !important;
+    padding: 0 8px !important;
+    border-bottom: 1px solid #dee3ea !important;
+    align-items: center !important;
+}
+
+/* Column layout */
+.block-container > [data-testid="stVerticalBlock"]
+  > [data-testid="stHorizontalBlock"]:first-of-type > [data-testid="stColumn"] {
+    background: transparent !important;
+    height: 92px !important;
+    padding: 0 4px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+}
+
+/* Inner vertical blocks */
+.block-container > [data-testid="stVerticalBlock"]
+  > [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stVerticalBlock"] {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    gap: 0 !important;
+}
+
+/* Element containers */
+.block-container > [data-testid="stVerticalBlock"]
+  > [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stElementContainer"] {
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+}
+
+/* Markdown containers */
+.block-container > [data-testid="stVerticalBlock"]
+  > [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stMarkdownContainer"] {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+.block-container > [data-testid="stVerticalBlock"]
+  > [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stMarkdownContainer"] p {
+    margin: 0 !important;
+    padding: 0 !important;
+    display: contents !important;
+}
+
+/* ── Top nav buttons ─────────────────────────────────────────────── */
+.block-container > [data-testid="stVerticalBlock"]
+  > [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stButton"] button {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    color: #334e68 !important;
+    font-size: 13.5px !important;
+    font-weight: 500 !important;
+    white-space: nowrap !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    padding: 0 16px !important;
+    border-radius: 10px !important;
+    width: 100% !important;
+    letter-spacing: 0.1px !important;
+    transition: background 0.15s ease, color 0.15s ease !important;
+}
+.block-container > [data-testid="stVerticalBlock"]
+  > [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stButton"] button:hover {
+    background: rgba(37,99,235,0.08) !important;
+    color: #1d4ed8 !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+.block-container > [data-testid="stVerticalBlock"]
+  > [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stButton"] button:focus,
+.block-container > [data-testid="stVerticalBlock"]
+  > [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stButton"] button:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* ── Logo box ─────────────────────────────────────────────────────── */
+.ud-nav-logo-box {
+    width: 72px; min-width: 72px; height: 72px;
+    border-radius: 14px; overflow: hidden;
+    background: #1a3060; flex-shrink: 0;
+    box-shadow: 0 0 0 2px rgba(37,99,235,0.4);
+}
+
+/* ── Active nav pill — matches inactive button height exactly ──────── */
+.ud-nav-pill-active {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    color: #fff !important;
+    font-size: 13.5px;
+    font-weight: 600;
+    height: 38px;
+    min-height: 38px;
+    padding: 0 18px;
+    border-radius: 10px;
+    white-space: nowrap;
+    cursor: default;
+    width: 100%;
+    box-sizing: border-box;
+    text-align: center;
+    letter-spacing: 0.1px;
+    box-shadow: 0 2px 8px rgba(37,99,235,0.25);
+}
+
+/* Nav is in normal flow — flush to top of block-container. */
 .block-container {
-    padding-left: 72px !important;
-    padding-top: 1.5rem !important;
+    padding-top: 0 !important;
 }
 
 [data-testid="stMetric"] {
@@ -195,8 +285,8 @@ st.markdown("""
     background: linear-gradient(135deg, #1a2744 0%, #2563eb 100%);
     color: white;
     border-radius: 12px;
-    padding: 36px 40px;
-    margin-bottom: 14px;
+    padding: 22px 32px;
+    margin-bottom: 10px;
 }
 .hero-banner h1 { color: white; margin: 0 0 8px 0; font-size: 28px; }
 .hero-banner p  { color: #c7d8f5; margin: 0; font-size: 15px; }
@@ -292,7 +382,7 @@ st.markdown("""
 }
 .about-hero {
     background: linear-gradient(135deg, #1e3a8a 0%, #1a2744 100%);
-    color: white; border-radius: 12px; padding: 28px 32px; margin-bottom: 24px;
+    color: white; border-radius: 12px; padding: 20px 28px; margin-bottom: 16px;
 }
 .section-subtitle {
     font-size: 13px; color: #64748b; margin: -8px 0 14px 0; line-height: 1.5;
@@ -308,14 +398,14 @@ st.markdown("""
     margin-bottom: 6px;
     display: flex;
     flex-direction: column;
-    height: 340px;
+    height: 280px;
 }
 .cta-card:hover {
     box-shadow: 0 8px 24px rgba(37,99,235,0.13);
     border-color: #2563eb;
 }
 .cta-card-body {
-    padding: 20px 20px 14px 20px;
+    padding: 14px 16px 10px 16px;
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -346,7 +436,7 @@ st.markdown("""
     transform: translateY(0);
     box-shadow: 0 3px 10px rgba(37,99,235,0.1);
 }
-.cta-card-body { padding: 20px 20px 14px 20px; }
+.cta-card-body { padding: 14px 16px 10px 16px; }
 .cta-card-footer {
     padding: 11px 20px;
     background: #f0f7ff;
@@ -404,6 +494,19 @@ PAGES = [
     "About",
 ]
 
+# ── Auth debug flag ───────────────────────────────────────────────────────────
+# Terminal-only output — never shown in the Streamlit UI.  Set False when done.
+AUTH_DEBUG = False
+
+# ── Cookie manager (invisible browser-bridge component) ───────────────────────
+# Rendered here, at the very top of every run, so cookies are readable before
+# the auth gate.  Falls back to None when the package is not installed.
+try:
+    import extra_streamlit_components as stx  # type: ignore
+    _cm = stx.CookieManager(key="ud_auth")
+except Exception:
+    _cm = None
+
 # ── Session state ─────────────────────────────────────────────────────────────
 
 if "selected_ticker" not in st.session_state:
@@ -416,6 +519,10 @@ if "paper_ticker_prefill" not in st.session_state:
     st.session_state.paper_ticker_prefill = None
 if "paper_source_prefill" not in st.session_state:
     st.session_state.paper_source_prefill = "sample"
+if "supabase_user" not in st.session_state:
+    st.session_state["supabase_user"] = None
+if "supabase_session" not in st.session_state:
+    st.session_state["supabase_session"] = None
 
 # Resolve navigation.  Priority: pending_nav_page (button) > query param (anchor link).
 if "pending_nav_page" in st.session_state:
@@ -435,6 +542,18 @@ else:
             st.query_params.clear()
     except Exception:
         pass
+
+# Handle logout via ?auth=logout query param (legacy / direct URL fallback).
+try:
+    if st.query_params.get("auth") == "logout":
+        sign_out()
+        clear_auth_cookies(_cm)
+        st.session_state["_just_logged_out"] = True
+        st.session_state["_cm_init_retries"] = 0
+        st.query_params.clear()
+        st.rerun()
+except Exception:
+    pass
 
 # ── Cached data ───────────────────────────────────────────────────────────────
 
@@ -523,10 +642,237 @@ def _fetch_replay_daily_cached(
     )
 
 
-# ── Custom fixed nav rail (not inside st.sidebar) ────────────────────────────
-# Renders as position:fixed HTML — fully independent of Streamlit's native sidebar.
-# Navigation uses <a href="?nav=..." target="_self"> to stay same-tab.
-# Routing block above resolves ?nav query param → st.session_state.nav_page.
+# ── Auth gate ─────────────────────────────────────────────────────────────────
+
+def _page_login() -> None:
+    """Login / sign-up screen shown to unauthenticated visitors."""
+    _, center, _ = st.columns([1, 2, 1])
+    with center:
+        st.markdown("<div style='height:60px'></div>", unsafe_allow_html=True)
+
+        st.markdown("""
+        <div style="text-align:center;padding:0 0 16px 0">
+          <div style="font-size:30px;font-weight:800;color:#1a2744;letter-spacing:-0.5px">Underdawg</div>
+          <div style="font-size:12px;color:#64748b;margin-top:4px;letter-spacing:0.5px;text-transform:uppercase">
+            Equity Research &middot; MSDSBA
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown(
+            "<p style='text-align:center;color:#475569;font-size:14px;margin-bottom:24px'>"
+            "Sign in to keep your watchlist, notes, and paper portfolio separate."
+            "</p>",
+            unsafe_allow_html=True,
+        )
+
+        if not secrets_configured():
+            st.error(
+                "Supabase is not configured. "
+                "Add `[supabase]` with `url` and `anon_key` to `.streamlit/secrets.toml`."
+            )
+            st.stop()
+
+        # ── Sign in ──────────────────────────────────────────────────────────
+        st.markdown("#### Sign in")
+        login_email = st.text_input(
+            "Email", key="auth_login_email", placeholder="you@example.com",
+            label_visibility="collapsed",
+        )
+        login_pw = st.text_input(
+            "Password", key="auth_login_password", type="password",
+            placeholder="Password",
+            label_visibility="collapsed",
+        )
+
+        if st.button("Sign in", type="primary", use_container_width=True, key="auth_signin_btn"):
+            if not login_email.strip():
+                st.error("Please enter your email address.")
+            elif not login_pw:
+                st.error("Please enter your password.")
+            else:
+                with st.spinner("Signing in…"):
+                    _r = sign_in(login_email.strip(), login_pw)
+                if _r["ok"]:
+                    st.session_state["supabase_user"]    = _r["user"]
+                    st.session_state["supabase_session"] = _r["session"]
+                    # Defer cookie save to next render — calling cm.set() right
+                    # before st.rerun() races with the component JS and cookies
+                    # never get written.  The _pending_cookie_save flag is consumed
+                    # in the authenticated section on the very next render.
+                    st.session_state["_pending_cookie_save"] = _r.get("session") or {}
+                    st.rerun()
+                else:
+                    st.error(_r["error"])
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Create account ───────────────────────────────────────────────────
+        with st.expander("Create account"):
+            signup_email = st.text_input(
+                "Email", key="auth_signup_email", placeholder="you@example.com",
+                label_visibility="collapsed",
+            )
+            signup_pw = st.text_input(
+                "Password", key="auth_signup_pw", type="password",
+                placeholder="Password (min 6 characters)",
+                label_visibility="collapsed",
+                help="Minimum 6 characters.",
+            )
+            signup_pw2 = st.text_input(
+                "Confirm password", key="auth_signup_pw2", type="password",
+                placeholder="Confirm password",
+                label_visibility="collapsed",
+            )
+
+            if st.button("Create account", use_container_width=True, key="auth_signup_btn"):
+                if not signup_email.strip():
+                    st.error("Please enter an email address.")
+                elif not signup_pw:
+                    st.error("Please enter a password.")
+                elif len(signup_pw) < 6:
+                    st.error("Password must be at least 6 characters.")
+                elif signup_pw != signup_pw2:
+                    st.error("Passwords do not match. Please re-enter.")
+                else:
+                    with st.spinner("Creating account…"):
+                        _r = sign_up(signup_email.strip(), signup_pw)
+                    if _r["ok"]:
+                        if _r.get("needs_confirmation"):
+                            st.success(
+                                "Account created! Check your email to confirm your address, "
+                                "then sign in above."
+                            )
+                        elif _r.get("session"):
+                            st.session_state["supabase_user"]    = _r["user"]
+                            st.session_state["supabase_session"] = _r["session"]
+                            st.session_state["_pending_cookie_save"] = _r.get("session") or {}
+                            st.rerun()
+                        else:
+                            st.success("Account created. Please sign in above.")
+                    else:
+                        st.error(_r["error"])
+
+        st.markdown(
+            "<p style='text-align:center;font-size:11px;color:#94a3b8;margin-top:28px'>"
+            "Underdawg is for educational and research support only. Not investment advice."
+            "</p>",
+            unsafe_allow_html=True,
+        )
+
+
+# ── Cookie-based auth restore ─────────────────────────────────────────────────
+# CookieManager is an iframe-backed component.  On a hard browser reload, the
+# component re-initialises and its JS fires asynchronously.  get_all() returns
+# {} (the default) while hydrating — identical to "no cookies" — so we cannot
+# distinguish the two cases on the first render.  Strategy:
+#
+#  1. Try restore immediately (succeeds on render 2+ when CM was already warm).
+#  2. If cookies are empty AND we have retries left AND the user didn't just log
+#     out: show "Restoring session…" and wait.  The CM auto-rerun (triggered by
+#     setComponentValue) will deliver the real cookies on the next render.
+#  3. Once CM has actual data (non-empty dict), attempt restore.
+#  4. After retry window is exhausted with no cookies, or after explicit logout,
+#     show the login page immediately.
+
+_CM_MAX_RETRIES = 3   # covers CM hydration delay; 3 renders ≈ a few hundred ms
+
+# Step 1 — immediate attempt (works on render 2+ after CM fires setComponentValue)
+if not is_authenticated():
+    restore_session_if_possible(_cm, debug=AUTH_DEBUG)
+
+# Step 2 — CM hydration gate
+if not is_authenticated() and _cm is not None:
+    _cm_retry  = st.session_state.get("_cm_init_retries", 0)
+    _just_lo   = st.session_state.get("_just_logged_out",  False)
+
+    try:
+        _all_c = _cm.get_all()
+    except Exception:
+        _all_c = {}
+
+    _cm_has_data   = bool(_all_c)                                 # non-empty dict
+    _at_present    = bool((_all_c or {}).get("ud_access_token"))
+    _rt_present    = bool((_all_c or {}).get("ud_refresh_token"))
+    _auth_ck_found = _at_present or _rt_present
+
+    # Wait when: CM returned empty (might be default, not yet hydrated),
+    #            retry budget remains, and user didn't just click Sign out.
+    _should_wait = (
+        not _cm_has_data
+        and _cm_retry < _CM_MAX_RETRIES
+        and not _just_lo
+    )
+
+    if AUTH_DEBUG:
+        print(
+            f"[auth] cm_data={'yes' if _cm_has_data else 'no'} | "
+            f"at={'yes' if _at_present else 'no'} | "
+            f"rt={'yes' if _rt_present else 'no'} | "
+            f"retry={_cm_retry} | wait={'yes' if _should_wait else 'no'} | "
+            f"keys={list((_all_c or {}).keys())}"
+        )
+
+    if _should_wait:
+        # CM hasn't delivered cookies yet — hold the login gate, give it a render.
+        if AUTH_DEBUG:
+            print(
+                f"[auth] restoring session… "
+                f"(attempt {_cm_retry + 1}/{_CM_MAX_RETRIES})"
+            )
+        st.session_state["_cm_init_retries"] = _cm_retry + 1
+        st.markdown(
+            "<div style='text-align:center;color:#64748b;"
+            "padding:60px 0;font-size:14px'>Restoring session…</div>",
+            unsafe_allow_html=True,
+        )
+        st.rerun()
+
+    elif _auth_ck_found:
+        # Auth cookies are present — attempt restore.
+        _restored = restore_session_if_possible(_cm, debug=AUTH_DEBUG)
+        if not _restored:
+            # Tokens are stale / invalid — clear them so the login form is clean.
+            if AUTH_DEBUG:
+                print("[auth] restore failed — clearing stale auth cookies")
+            clear_auth_cookies(_cm, debug=AUTH_DEBUG)
+
+    # Delivery confirmed (or retries exhausted) — reset counter for next nav click.
+    st.session_state["_cm_init_retries"] = 0
+
+if not is_authenticated():
+    if AUTH_DEBUG:
+        print(
+            "[auth] showing login "
+            f"({'post-logout' if st.session_state.get('_just_logged_out') else 'retry exhausted or no auth cookies'})"
+        )
+    st.session_state.pop("_just_logged_out", None)
+    _page_login()
+    st.stop()
+
+# ── Deferred auth-cookie save ─────────────────────────────────────────────────
+# Calling cm.set() immediately before st.rerun() (in the sign-in handler) races
+# with the CookieManager component's JS — the rerun can start before the browser
+# executes the cookie-write.  Instead, sign-in stores a _pending_cookie_save flag
+# and we consume it here, during the first fully authenticated render cycle.
+if "_pending_cookie_save" in st.session_state:
+    _pcs = st.session_state.pop("_pending_cookie_save")
+    if isinstance(_pcs, dict):
+        _pcs_at = str(_pcs.get("access_token") or "")
+        _pcs_rt = str(_pcs.get("refresh_token") or "")
+        if _pcs_at and _pcs_rt:
+            if AUTH_DEBUG:
+                print(
+                    f"[auth] deferred cookie save: "
+                    f"at_len={len(_pcs_at)} rt_len={len(_pcs_rt)}"
+                )
+            save_auth_cookies(_cm, _pcs_at, _pcs_rt, debug=AUTH_DEBUG)
+
+# ── Authenticated — get user for nav rail display ─────────────────────────────
+_auth_user  = get_current_user() or {}
+_auth_email = _auth_user.get("email", "")
+
+# ── Sidebar navigation ────────────────────────────────────────────────────────
 
 _LOGO_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAACwAAAAsCAYAAAAehFoBAAAGA0lEQVR42u1YbWxb1Rl+"
@@ -563,52 +909,82 @@ _LOGO_B64 = (
     "v+eVAAAAAElFtkSuQmCC"
 )
 
+def set_nav_page(page_name: str) -> None:
+    """Internal navigation (used by in-page buttons). Sets nav_page and reruns."""
+    st.session_state["nav_page"] = page_name
+    st.rerun()
+
+
 _cur_page = st.session_state.get("nav_page", "Home")
 
-def _rail_item(icon: str, label: str, page_name: str) -> str:
-    active = (page_name == _cur_page)
-    url    = "?nav=" + page_name.replace(" ", "%20")
-    if active:
-        return (
-            f'<div class="ud-nav-item-active">'
-            f'<div class="ud-nav-icon">{icon}</div>'
-            f'<span class="ud-nav-label">{label}</span>'
-            f'</div>'
-        )
-    return (
-        f'<a href="{url}" target="_self" class="ud-nav-item">'
-        f'<div class="ud-nav-icon">{icon}</div>'
-        f'<span class="ud-nav-label">{label}</span>'
-        f'</a>'
+# ── Top navigation bar ─────────────────────────────────────────────────────
+(
+    _tnc_brand,
+    _tnc_home,
+    _tnc_screener,
+    _tnc_detail,
+    _tnc_portfolio,
+    _tnc_about,
+    _tnc_gap,
+    _tnc_email,
+    _tnc_signout,
+) = st.columns([2.5, 0.9, 1.1, 1.4, 2.0, 0.8, 0.4, 1.8, 1.0])
+
+with _tnc_brand:
+    st.markdown(
+        f'<div style="display:flex;align-items:center;gap:14px;padding:10px 4px">'
+        f'<div class="ud-nav-logo-box">'
+        f'<img src="data:image/png;base64,{_LOGO_B64}" '
+        f'style="width:72px;height:72px;object-fit:contain;image-rendering:auto;display:block" alt=""></div>'
+        f'<div style="display:flex;flex-direction:column;gap:3px">'
+        f'<div style="font-size:28px;font-weight:900;color:#0b2347;line-height:1.1;'
+        f'letter-spacing:-0.6px">Underdawg</div>'
+        f'<div style="font-size:13px;font-weight:500;color:#3d638a;line-height:1.2;'
+        f'letter-spacing:0.4px">Equity Research</div>'
+        f'</div></div>',
+        unsafe_allow_html=True,
     )
 
-_rail_html = "\n".join([
-    _rail_item("H", "Home",               "Home"),
-    _rail_item("S", "Screener",           "Screener"),
-    _rail_item("C", "Company Detail",     "Company Detail"),
-    _rail_item("P", "Portfolio Simulator","Portfolio Simulator"),
-    _rail_item("A", "About",              "About"),
-])
+for _tnc_label, _tnc_col in [
+    ("Home",                _tnc_home),
+    ("Screener",            _tnc_screener),
+    ("Company Detail",      _tnc_detail),
+    ("Portfolio Simulator", _tnc_portfolio),
+    ("About",               _tnc_about),
+]:
+    with _tnc_col:
+        if _cur_page == _tnc_label:
+            st.markdown(
+                f'<div class="ud-nav-pill-active">{_tnc_label}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            if st.button(
+                _tnc_label,
+                key=f"nav_{_tnc_label.replace(' ', '_')}",
+                use_container_width=True,
+            ):
+                set_nav_page(_tnc_label)
 
-st.markdown(f"""
-<div class="ud-nav-rail">
-  <div style="padding:14px 6px 6px 6px;display:flex;align-items:center">
-    <div class="ud-nav-icon" style="overflow:hidden;border-radius:8px;background:#1e3a6b">
-      <img src="data:image/png;base64,{_LOGO_B64}" style="width:40px;height:40px;object-fit:cover;display:block" alt="Underdawg">
-    </div>
-    <span class="ud-nav-text-hide" style="font-size:14px;font-weight:700;color:#e8edf5;margin-left:8px">Underdawg</span>
-  </div>
-  <div style="padding:0 6px 4px 6px">
-    <span class="ud-nav-text-hide" style="font-size:10px;color:#64748b">Equity Research · MSDSBA</span>
-  </div>
-  <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:2px 0 4px 0">
-  {_rail_html}
-  <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:4px 0">
-  <div style="padding:4px 6px 8px 6px">
-    <span class="ud-nav-text-hide" style="font-size:10px;color:#64748b">Educational use only. Not investment advice.</span>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+with _tnc_email:
+    if _auth_email:
+        _disp = (_auth_email[:22] + "…") if len(_auth_email) > 22 else _auth_email
+        st.markdown(
+            f'<div style="font-size:11px;color:#5a7a9e;text-align:right;padding:2px 4px;'
+            f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+            f'{_disp}</div>',
+            unsafe_allow_html=True,
+        )
+
+with _tnc_signout:
+    if st.button("Sign out", key="nav_signout", use_container_width=True):
+        sign_out()
+        clear_auth_cookies(_cm, debug=AUTH_DEBUG)
+        st.session_state["_just_logged_out"] = True
+        st.session_state["_cm_init_retries"] = 0
+        st.rerun()
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 page = st.session_state.get("nav_page", "Home")
 
@@ -995,7 +1371,7 @@ def page_home() -> None:
     st.markdown("""
     <div class="hero-banner">
       <div style="font-size:11px;color:#93c5fd;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">UNDERDAWG</div>
-      <h1 style="font-size:32px;margin:0 0 10px 0;color:white">Turn scattered stock research<br>into a ranked, explainable shortlist.</h1>
+      <h1 style="font-size:26px;margin:0 0 8px 0;color:white">Turn scattered stock research<br>into a ranked, explainable shortlist.</h1>
       <p style="font-size:15px;color:#c7d8f5;margin:0">
         Screen companies, understand why each is flagged, and test ideas without real money.
       </p>
@@ -2123,17 +2499,81 @@ def _xbrl_company_detail(mo: pd.DataFrame) -> None:
                  else (calib_sig if (calib_sig and pd.notna(calib_sig)) else signal_display))
 
     # Quality warning
+    _QFLAG_LABELS = {
+        "neutral_report_risk":   "Neutral Report Risk",
+        "needs_review":          "Needs Review",
+        "extreme_valuation_gap": "Extreme Valuation Gap",
+        "high_model_error":      "High Model Error",
+        "suspicious_market_cap": "Suspicious Market Cap",
+    }
+    def _hq(raw: str) -> str:
+        return ", ".join(
+            _QFLAG_LABELS.get(p.strip(), p.strip().replace("_", " ").title())
+            for p in raw.split(",") if p.strip()
+        )
+    _STALE_FILING_MSG = "filing-text extraction has not yet been integrated"
+    _is_only_nrr = {p.strip() for p in qflag.split(",")} == {"neutral_report_risk"}
+
+    def _plain_english_warnings(raw_text: str) -> list[str]:
+        """Convert raw pipeline warning strings into readable sentences."""
+        import re
+        out = []
+        for part in raw_text.split("|"):
+            part = part.strip()
+            if not part or _STALE_FILING_MSG in part.lower():
+                continue
+            # Model error magnitude
+            m = re.search(r"model error of ([+\-]?\d+\.?\d*)\s*\(log scale\)", part, re.I)
+            if m:
+                val = m.group(1)
+                out.append(
+                    f"The valuation model had a large estimation error ({val} on a log scale) "
+                    f"for this data point, which reduces confidence in the model output."
+                )
+                continue
+            # Extreme valuation gap
+            if "extreme" in part.lower() and "valuation" in part.lower():
+                out.append(
+                    "The model-estimated fair value is very far from the current market price. "
+                    "This may reflect unusual business conditions or a data quality issue — "
+                    "treat the signal with extra caution."
+                )
+                continue
+            # Suspicious market cap
+            if "suspicious" in part.lower() and "market cap" in part.lower():
+                out.append(
+                    "The market capitalisation figure for this company looks unusual. "
+                    "Verify the data independently before relying on this signal."
+                )
+                continue
+            # Fallback: surface the raw text, cleaned up
+            out.append(part.rstrip(".") + ".")
+        return out
+
     if is_needs_review and wtext:
-        st.error(
-            f"**Data Quality Flag: {qflag}**\n\n"
-            + "\n".join(f"- {w.strip()}" for w in wtext.split("|") if w.strip())
-            + "\n\nThis row's signal has been overridden to **Needs review**."
+        _plain = _plain_english_warnings(wtext)
+        _msg = "**Data Quality Review**\n\nOne or more checks flagged this company's data:"
+        if _plain:
+            _msg += "\n\n" + "\n".join(f"- {s}" for s in _plain)
+        _msg += (
+            "\n\nThe research signal shown here has been marked **Needs Review** "
+            "and should not be used without independent verification."
         )
+        st.warning(_msg)
+    elif _is_only_nrr:
+        if not _has_real_risk:
+            st.info(
+                "**Data Quality Note:** Filing risk data is not yet available for this "
+                "company. The filing risk component uses a neutral placeholder (50/100)."
+            )
+        # _has_real_risk True → flag is a pre-integration artifact, silent
     elif qflag not in ("ok", "") and wtext:
-        st.warning(
-            f"**Data Quality Note ({qflag}):**\n\n"
-            + "\n".join(f"- {w.strip()}" for w in wtext.split("|") if w.strip())
-        )
+        _plain = _plain_english_warnings(wtext)
+        if _plain:
+            st.warning(
+                "**Data Quality Review**\n\n"
+                + "\n".join(f"- {s}" for s in _plain)
+            )
 
     # Header
     h1, h2 = st.columns([3, 1])
@@ -2154,7 +2594,7 @@ def _xbrl_company_detail(mo: pd.DataFrame) -> None:
         )
 
     # Action buttons
-    ab1, ab2, ab3, _ = st.columns([1, 1, 1, 2])
+    ab1, ab2, ab3, _ = st.columns([1, 1, 2, 1])
     with ab1:
         if st.button("Open in Simulator", key="xbrl_open_simulator"):
             st.session_state.paper_ticker_prefill = chosen
@@ -2322,10 +2762,14 @@ def _xbrl_company_detail(mo: pd.DataFrame) -> None:
                 st.info(_fw)
         else:
             _fdq = str(row.get("filing_data_quality_flag", "") or "")
-            if _fdq and _fdq not in ("", "None"):
-                st.info(f"Filing text status: **{_fdq}**. Run `python3 filing_risk_utils.py` for real scores.")
+            _fdq_note = {
+                "too_short":               "filing text was too short to score",
+                "filing_missing_or_error": "filing was missing or could not be parsed",
+            }.get(_fdq, "")
+            if _fdq_note:
+                st.info(f"**Filing risk note:** Data not available for this company ({_fdq_note}).")
             else:
-                st.info("Run `python3 filing_risk_utils.py` to compute real SEC 10-K risk scores.")
+                st.info("Filing risk data is not available for this company.")
 
         # ── Latest 10-Q risk update (supplemental) ───────────────────────────
         st.markdown('<div class="section-header" style="margin-top:18px">Latest 10-Q Risk Update</div>',
@@ -2635,8 +3079,7 @@ def page_company_detail(df: pd.DataFrame) -> None:
             height=1,
         )
     st.title("Company Detail")
-    detail_src = st.session_state.get("detail_source", "sample")
-    if detail_src == "xbrl" and mo_df is not None:
+    if mo_df is not None:
         _xbrl_company_detail(mo_df)
     else:
         st.caption("Showing sample data company profile.")
