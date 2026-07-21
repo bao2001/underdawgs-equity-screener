@@ -87,6 +87,74 @@ section[data-testid="stMain"],
     margin-top: 0 !important;
 }
 
+section[data-testid="stMain"] {
+    background: transparent !important;
+}
+
+/* ── Mercury-inspired subtle finance background ───────────────────── */
+[data-testid="stAppViewContainer"] {
+    background:
+        /* faint finance-grid pattern */
+        linear-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(15, 23, 42, 0.05) 1px, transparent 1px),
+
+        /* dark top glow behind nav/hero */
+        radial-gradient(circle at 18% 8%, rgba(30, 64, 175, 0.22), transparent 28%),
+        radial-gradient(circle at 78% 12%, rgba(37, 99, 235, 0.18), transparent 30%),
+
+        /* soft lower ambient glow */
+        radial-gradient(circle at 50% 90%, rgba(15, 23, 42, 0.08), transparent 36%),
+
+        /* clean fintech base */
+        linear-gradient(135deg, #f8fafc 0%, #ffffff 45%, #f1f5f9 100%) !important;
+
+    background-size:
+        42px 42px,
+        42px 42px,
+        180% 180%,
+        180% 180%,
+        180% 180%,
+        100% 100%;
+
+    animation: ud-bg-drift 18s ease-in-out infinite !important;
+}
+
+@keyframes ud-bg-drift {
+    0% {
+        background-position:
+            0 0,
+            0 0,
+            0% 45%,
+            100% 45%,
+            50% 100%,
+            0 0;
+    }
+    50% {
+        background-position:
+            10px 8px,
+            8px 10px,
+            100% 55%,
+            0% 50%,
+            55% 85%,
+            0 0;
+    }
+    100% {
+        background-position:
+            0 0,
+            0 0,
+            0% 45%,
+            100% 45%,
+            50% 100%,
+            0 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    [data-testid="stAppViewContainer"] {
+        animation: none !important;
+    }
+}
+            
 /* ── Hide native Streamlit sidebar ─────────────────────────────────── */
 section[data-testid="stSidebar"],
 [data-testid="collapsedControl"],
@@ -257,6 +325,29 @@ section[data-testid="stSidebar"],
 /* ── Nav control offset spacer — pushes buttons/email/signout downward ───────── */
 .ud-nav-control-offset {
     height: 14px;
+}
+
+/* ── Page vertical spacing utilities ────────────────────────────────────────── */
+/* Use st.markdown('<div class="ud-XXX"></div>', unsafe_allow_html=True)        */
+.ud-page-start      { height: 32px; }   /* below nav before first page element  */
+.ud-section         { height: 28px; }   /* between major page sections          */
+.ud-section-tight   { height: 14px; }   /* between closely related elements     */
+.ud-section-loose   { height: 44px; }   /* before large standalone sections     */
+.ud-tabs-spacer     { height: 20px; }   /* between tab bar and first content    */
+.ud-card-grid-spacer { height: 16px; }  /* before card / metric grid rows       */
+.ud-footer-spacer   { height: 100px; }   /* before disclaimer / footer content   */
+.ud-gap-12 { height: 12px; }
+.ud-gap-16 { height: 16px; }
+.ud-gap-24 { height: 24px; }
+.ud-gap-32 { height: 32px; }
+
+.about-action-card {
+    background: rgba(255, 255, 255, 0.78);
+    border: 1px solid #dbe4f0;
+    border-radius: 12px;
+    padding: 18px 20px;
+    min-height: 120px;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
 }
 
 /* Override Streamlit's default block-container padding (80px 80px 160px).       */
@@ -1573,7 +1664,7 @@ def page_home() -> None:
             st.session_state["portfolio_tab"] = "Historical Replay"
             st.rerun()
 
-    st.markdown('<div style="height:120px"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="ud-footer-spacer"></div>', unsafe_allow_html=True)
 
     # Disclaimer strip
     st.markdown("""
@@ -1597,6 +1688,7 @@ def page_home() -> None:
 # ════════════════════════════════════════════════════════════════════════════
 
 def page_screener(df: pd.DataFrame) -> None:
+    st.markdown('<div class="ud-page-start"></div>', unsafe_allow_html=True)
     st.title("Research Screener")
     st.markdown('<div class="section-subtitle">Find companies worth deeper review using valuation, quality, and filing-risk signals.</div>', unsafe_allow_html=True)
 
@@ -1690,6 +1782,7 @@ def page_screener(df: pd.DataFrame) -> None:
         _fresh_ct    = int((active_df.get("market_freshness", pd.Series()) == "fresh").sum())
         _cm_any      = _fresh_ct > 0 or int((active_df.get("market_freshness", pd.Series()) == "stale").sum()) > 0
 
+        st.markdown('<div class="ud-section-tight"></div>', unsafe_allow_html=True)
         sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
         sc1.metric("Companies",         _n_companies)
         sc2.metric("Model year range",  _yr_range)
@@ -1700,6 +1793,7 @@ def page_screener(df: pd.DataFrame) -> None:
         sc5.metric("Mkt data fresh",    _fresh_ct if _cm_any else "—",
                    help="Tickers with current market data fetched within the last 5 hours.")
         sc6.metric("Flagged rows",      _n_flagged)
+        st.markdown('<div class="ud-gap-16"></div>', unsafe_allow_html=True)
 
         # Market snapshot freshness banner + refresh
         _mts_label   = "Current market unavailable"
@@ -1736,7 +1830,7 @@ def page_screener(df: pd.DataFrame) -> None:
                     st.rerun()
                 except Exception as _re:
                     st.warning(f"Refresh failed: {_re}")
-        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+        st.markdown('<div class="ud-section-tight"></div>', unsafe_allow_html=True)
 
     # Signal toggles
     hide_flagged = False
@@ -1952,6 +2046,7 @@ def page_screener(df: pd.DataFrame) -> None:
     elif sort_by == "Year":
         fdf = fdf.sort_values("year", ascending=False)
     fdf = fdf.reset_index(drop=True)
+    st.markdown('<div class="ud-gap-16"></div>', unsafe_allow_html=True)
 
     # Signal distribution summary strip
     counts = {s: len(fdf[fdf["Final_Signal"] == s]) for s in SIGNAL_ORDER}
@@ -1967,7 +2062,7 @@ def page_screener(df: pd.DataFrame) -> None:
                 f'</div>',
                 unsafe_allow_html=True,
             )
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="ud-gap-100"></div>', unsafe_allow_html=True)
 
     # Build display table
     if use_xbrl:
@@ -2263,6 +2358,7 @@ def page_screener(df: pd.DataFrame) -> None:
         _risk_adj = str(row.get("final_signal_calibrated_risk_adjusted") or "") if use_risk_adjusted else ""
         _show_sig = _risk_adj if (_risk_adj and _risk_adj != "nan") else _sig_disp
 
+        st.markdown('<div class="ud-gap-24"></div>', unsafe_allow_html=True)
         st.markdown('<div class="section-header">Selected Company</div>', unsafe_allow_html=True)
         if use_xbrl:
             st.markdown('<div class="data-label">Historical Model Output</div>', unsafe_allow_html=True)
@@ -2295,6 +2391,7 @@ def page_screener(df: pd.DataFrame) -> None:
             q4.metric("Quality Score",     _sfmt(row.get("Quality_Score"), ".0f", prefix="", suffix="/100"))
             q5.metric("Report Risk Score", _sfmt(row.get("Report_Risk_Score"), ".0f", prefix="", suffix="/100"))
 
+        st.markdown('<div class="ud-gap-12"></div>', unsafe_allow_html=True)
         st.markdown(signal_badge_html(_show_sig), unsafe_allow_html=True)
         if _risk_adj and _risk_adj not in ("", "nan") and _risk_adj != _sig_disp:
             st.caption(f"Risk-adjusted signal. Original calibrated: {_sig_disp}")
@@ -2380,6 +2477,7 @@ def page_screener(df: pd.DataFrame) -> None:
             _render_explanation(row.to_dict())
 
     st.divider()
+    st.markdown('<div class="ud-gap-16"></div>', unsafe_allow_html=True)
 
     # Charts in tabs
     chart_tab1, chart_tab2, chart_tab3 = st.tabs(
@@ -2675,7 +2773,7 @@ def _xbrl_company_detail(mo: pd.DataFrame) -> None:
     with ab3:
         _render_watchlist_button(chosen, row.to_dict(), "Company Detail")
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="ud-section-tight"></div>', unsafe_allow_html=True)
 
     # Tabs
     tab_ov, tab_val, tab_risk, tab_profile, tab_notes = st.tabs(
@@ -2684,6 +2782,7 @@ def _xbrl_company_detail(mo: pd.DataFrame) -> None:
 
     # ── Overview ──────────────────────────────────────────────────────────────
     with tab_ov:
+        st.markdown('<div class="ud-tabs-spacer"></div>', unsafe_allow_html=True)
         st.markdown('<div class="data-label">Historical Model Output</div>', unsafe_allow_html=True)
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Actual Market Cap",   _sfmt(row.get("Market_Cap_B"), ".2f", suffix="B"))
@@ -3145,6 +3244,7 @@ def page_company_detail(df: pd.DataFrame) -> None:
             </script>""",
             height=1,
         )
+    st.markdown('<div class="ud-page-start"></div>', unsafe_allow_html=True)
     st.title("Company Detail")
     if mo_df is not None:
         _xbrl_company_detail(mo_df)
@@ -4429,6 +4529,7 @@ def _pp_watchlist_tab() -> None:
 
 def page_portfolio_simulator(df: pd.DataFrame) -> None:
     """Portfolio Simulator — two-tab page: Live Paper Portfolio + Historical Replay."""
+    st.markdown('<div class="ud-page-start"></div>', unsafe_allow_html=True)
     st.title("Portfolio Simulator")
 
     st.markdown("""
@@ -4442,6 +4543,7 @@ Historical replay uses simplified assumptions and does not predict future result
 </div>
 """, unsafe_allow_html=True)
 
+    st.markdown('<div class="ud-section-tight"></div>', unsafe_allow_html=True)
     tab_live, tab_replay, tab_wl = st.tabs(["Live Paper Portfolio", "Historical Replay", "Watchlist"])
 
     with tab_live:
@@ -5646,6 +5748,7 @@ def _pp_live_tab(df: pd.DataFrame) -> None:
     update_portfolio_history(total_val, float(portfolio.get("current_cash", 0)), invested_val)
 
     # ── Portfolio analytics ───────────────────────────────────────────────────
+    st.markdown('<div class="ud-section"></div>', unsafe_allow_html=True)
     st.markdown("### Portfolio Analytics")
 
     a1, a2, a3, a4, a5 = st.columns(5)
@@ -5672,6 +5775,7 @@ def _pp_live_tab(df: pd.DataFrame) -> None:
             "Simulated result — not investment advice."
         )
 
+    st.markdown('<div class="ud-section"></div>', unsafe_allow_html=True)
     st.divider()
 
     # ── Simulated Order Ticket ────────────────────────────────────────────────
@@ -6634,6 +6738,7 @@ def _render_ticker_universe_tab() -> None:
 
 
 def page_about() -> None:
+    st.markdown('<div class="ud-page-start"></div>', unsafe_allow_html=True)
     st.markdown("""
     <div class="about-hero">
       <div style="font-size:11px;color:#93c5fd;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">ABOUT UNDERDAWG</div>
@@ -6642,6 +6747,7 @@ def page_about() -> None:
     </div>
     """, unsafe_allow_html=True)
 
+    st.markdown('<div class="ud-gap-24"></div>', unsafe_allow_html=True)
     # Ticker Universe tab hidden temporarily until custom ticker setup is production-ready.
     tab_ov, tab_how, tab_meth, tab_bm, tab_diag = st.tabs(
         ["Overview", "How It Works", "Methodology", "Benchmark Comparison",
@@ -6649,6 +6755,7 @@ def page_about() -> None:
     )
 
     with tab_ov:
+        st.markdown('<div class="ud-tabs-spacer"></div>', unsafe_allow_html=True)
         st.markdown("#### What Underdawg does")
         st.markdown(
             "Underdawg helps self-directed investors screen companies, understand why each stock is flagged, "
@@ -6666,27 +6773,47 @@ def page_about() -> None:
         else:
             n_companies = 29; n_rows = 361; year_range = "2010–2024"; n_replay_yrs = 15; nr_count = 0
 
+        st.markdown('<div class="ud-section"></div>', unsafe_allow_html=True)
         st.markdown("#### By the Numbers")
+        st.markdown('<div class="ud-card-grid-spacer"></div>', unsafe_allow_html=True)
         stat_cols = st.columns(5)
         stat_cols[0].metric("Companies", n_companies)
         stat_cols[1].metric("Company-year rows", n_rows)
         stat_cols[2].metric("Years covered", year_range)
         stat_cols[3].metric("Flagged rows", nr_count)
         stat_cols[4].metric("Replay-ready years", n_replay_yrs)
+        st.markdown('<div class="ud-gap-24"></div>', unsafe_allow_html=True)
 
         st.divider()
         st.markdown("#### What you can do")
+        st.markdown('<div class="ud-gap-12"></div>', unsafe_allow_html=True)
         wc1, wc2, wc3 = st.columns(3)
         with wc1:
-            st.markdown("**Research shortlist**")
-            st.markdown("Screen and rank companies by valuation gap, quality score, and filing risk. Export as CSV.")
+            st.markdown(
+                '<div class="about-action-card">'
+                '<div style="font-size:14px;font-weight:700;color:#1a2744;margin-bottom:8px">Research shortlist</div>'
+                '<div style="font-size:13px;color:#475569;line-height:1.5">Screen and rank companies by valuation gap, quality score, and filing risk. Export as CSV.</div>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
         with wc2:
-            st.markdown("**Paper portfolio**")
-            st.markdown("Execute simulated buys and sells, track P/L, compare to SPY or QQQ.")
+            st.markdown(
+                '<div class="about-action-card">'
+                '<div style="font-size:14px;font-weight:700;color:#1a2744;margin-bottom:8px">Paper portfolio</div>'
+                '<div style="font-size:13px;color:#475569;line-height:1.5">Execute simulated buys and sells, track P/L, compare to SPY or QQQ.</div>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
         with wc3:
-            st.markdown("**Historical replay**")
-            st.markdown("Pick an exact start date and holding period to see how a model shortlist would have performed.")
+            st.markdown(
+                '<div class="about-action-card">'
+                '<div style="font-size:14px;font-weight:700;color:#1a2744;margin-bottom:8px">Historical replay</div>'
+                '<div style="font-size:13px;color:#475569;line-height:1.5">Pick an exact start date and holding period to see how a model shortlist would have performed.</div>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
 
+        st.markdown('<div class="ud-footer-spacer"></div>', unsafe_allow_html=True)
         st.divider()
         st.markdown("""
         <div class="disclaimer-box">
