@@ -112,6 +112,16 @@ section[data-testid="stSidebar"],
     line-height: 0 !important;
 }
 
+/* ── Zero outer stVerticalBlock gap — removes purple spacer bands ───────────── */
+/* Streamlit's default gap (1rem) on the outer stVerticalBlock creates visible   */
+/* spacer bands: one above the nav (between collapsed items and nav row) and one */
+/* below the nav (stacking on top of the nav's intentional margin-bottom: 24px). */
+/* The > direct-child combinator limits this to the outermost stVerticalBlock    */
+/* only — nested stVerticalBlocks (inside columns, tabs, etc.) are unaffected.   */
+.block-container > [data-testid="stVerticalBlock"] {
+    gap: 0 !important;
+}
+
 /* ── Top nav bar — sticky, white background ──────────────────────── */
 .block-container > [data-testid="stVerticalBlock"]
   > [data-testid="stHorizontalBlock"]:first-of-type {
@@ -125,6 +135,7 @@ section[data-testid="stSidebar"],
     padding: 0 8px !important;
     border-bottom: 1px solid #dee3ea !important;
     align-items: center !important;
+    margin-bottom: 24px !important;
 }
 
 /* Column layout */
@@ -136,30 +147,42 @@ section[data-testid="stSidebar"],
     display: flex !important;
     flex-direction: column !important;
     justify-content: center !important;
+    align-items: stretch !important;
+    min-width: 0 !important;
 }
 
-/* Inner vertical blocks */
+            
+/* Inner vertical blocks — flex:1 + padding:0 + margin:0 ensures clean centering */
 .block-container > [data-testid="stVerticalBlock"]
   > [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stVerticalBlock"] {
     display: flex !important;
     flex-direction: column !important;
     justify-content: center !important;
+    align-items: stretch !important;
     gap: 0 !important;
+    flex: 1 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    min-height: 0 !important;
 }
 
 /* Element containers */
 .block-container > [data-testid="stVerticalBlock"]
   > [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stElementContainer"] {
-    margin-bottom: 0 !important;
-    padding-bottom: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    min-height: 0 !important;
 }
 
-/* Markdown containers */
+/* Markdown containers — display:flex + align-items:center centers child div vertically */
 .block-container > [data-testid="stVerticalBlock"]
   > [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stMarkdownContainer"] {
     width: 100% !important;
     margin: 0 !important;
     padding: 0 !important;
+    min-height: 0 !important;
+    display: flex !important;
+    align-items: center !important;
 }
 .block-container > [data-testid="stVerticalBlock"]
   > [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stMarkdownContainer"] p {
@@ -231,9 +254,16 @@ section[data-testid="stSidebar"],
     box-shadow: 0 2px 8px rgba(37,99,235,0.25);
 }
 
-/* Nav is in normal flow — flush to top of block-container. */
-.block-container {
-    padding-top: 0 !important;
+/* ── Nav control offset spacer — pushes buttons/email/signout downward ───────── */
+.ud-nav-control-offset {
+    height: 14px;
+}
+
+/* Override Streamlit's default block-container padding (80px 80px 160px).       */
+/* Two-class selector (.stMainBlockContainer.block-container) has specificity    */
+/* (0,2,0) — beats Streamlit's single-class rules even when both use !important. */
+.stMainBlockContainer.block-container {
+    padding: 30px 20px 0 20px !important;
 }
 
 [data-testid="stMetric"] {
@@ -263,7 +293,7 @@ section[data-testid="stSidebar"],
 }
 
 .section-header {
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 700;
     color: #1a2744;
     border-bottom: 2px solid #e2e8f0;
@@ -286,7 +316,8 @@ section[data-testid="stSidebar"],
     color: white;
     border-radius: 12px;
     padding: 22px 32px;
-    margin-bottom: 10px;
+    margin-top: 80px;
+    margin-bottom: 45px;
 }
 .hero-banner h1 { color: white; margin: 0 0 8px 0; font-size: 28px; }
 .hero-banner p  { color: #c7d8f5; margin: 0; font-size: 15px; }
@@ -378,7 +409,7 @@ section[data-testid="stSidebar"],
 .preview-card .pc-cap   { font-size: 11px; color: #64748b; margin-top: 8px; font-style: italic; }
 .disclaimer-strip {
     background: #fff8e1; border: 1px solid #fde68a; border-radius: 6px;
-    padding: 8px 14px; font-size: 12px; color: #78350f; margin: 8px 0;
+    padding: 8px 14px; font-size: 12px; color: #78350f; margin: 8px 0 36px 0;
 }
 .about-hero {
     background: linear-gradient(135deg, #1e3a8a 0%, #1a2744 100%);
@@ -395,10 +426,10 @@ section[data-testid="stSidebar"],
     overflow: hidden;
     box-shadow: 0 2px 8px rgba(0,0,0,0.06);
     transition: box-shadow 0.2s ease, border-color 0.2s ease;
-    margin-bottom: 6px;
+    margin-bottom: 12px;
     display: flex;
     flex-direction: column;
-    height: 280px;
+    height: 320px;
 }
 .cta-card:hover {
     box-shadow: 0 8px 24px rgba(37,99,235,0.13);
@@ -480,6 +511,39 @@ section[data-testid="stSidebar"],
     flex: 1;
     min-height: 0;
     overflow: hidden;
+}
+
+/* ── Consistent page heading system ─────────────────────────────────── */
+/* H2: major content sections below the page title */
+.block-container [data-testid="stMarkdownContainer"] h2 {
+    font-size: 22px !important;
+    font-weight: 700 !important;
+    color: #1a2744 !important;
+    letter-spacing: -0.3px !important;
+    margin: 22px 0 8px 0 !important;
+    line-height: 1.2 !important;
+}
+/* H3: section headings within tabs / content blocks — matches .section-header size */
+.block-container [data-testid="stMarkdownContainer"] h3 {
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    color: #1a2744 !important;
+    margin: 18px 0 8px 0 !important;
+    line-height: 1.2 !important;
+}
+/* H4: subsection and card headings */
+.block-container [data-testid="stMarkdownContainer"] h4 {
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    color: #1a2744 !important;
+    margin: 14px 0 5px 0 !important;
+}
+/* H5: smaller labels and grouped items */
+.block-container [data-testid="stMarkdownContainer"] h5 {
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    color: #334e68 !important;
+    margin: 10px 0 3px 0 !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -932,7 +996,7 @@ _cur_page = st.session_state.get("nav_page", "Home")
 
 with _tnc_brand:
     st.markdown(
-        f'<div style="display:flex;align-items:center;gap:14px;padding:10px 4px">'
+        f'<div style="display:flex;align-items:center;gap:14px;padding:0 4px">'
         f'<div class="ud-nav-logo-box">'
         f'<img src="data:image/png;base64,{_LOGO_B64}" '
         f'style="width:72px;height:72px;object-fit:contain;image-rendering:auto;display:block" alt=""></div>'
@@ -953,6 +1017,7 @@ for _tnc_label, _tnc_col in [
     ("About",               _tnc_about),
 ]:
     with _tnc_col:
+        st.markdown('<div class="ud-nav-control-offset"></div>', unsafe_allow_html=True)
         if _cur_page == _tnc_label:
             st.markdown(
                 f'<div class="ud-nav-pill-active">{_tnc_label}</div>',
@@ -967,6 +1032,7 @@ for _tnc_label, _tnc_col in [
                 set_nav_page(_tnc_label)
 
 with _tnc_email:
+    st.markdown('<div class="ud-nav-control-offset"></div>', unsafe_allow_html=True)
     if _auth_email:
         _disp = (_auth_email[:22] + "…") if len(_auth_email) > 22 else _auth_email
         st.markdown(
@@ -977,6 +1043,7 @@ with _tnc_email:
         )
 
 with _tnc_signout:
+    st.markdown('<div class="ud-nav-control-offset"></div>', unsafe_allow_html=True)
     if st.button("Sign out", key="nav_signout", use_container_width=True):
         sign_out()
         clear_auth_cookies(_cm, debug=AUTH_DEBUG)
@@ -1506,7 +1573,7 @@ def page_home() -> None:
             st.session_state["portfolio_tab"] = "Historical Replay"
             st.rerun()
 
-    st.markdown('<div style="height:20px"></div>', unsafe_allow_html=True)
+    st.markdown('<div style="height:120px"></div>', unsafe_allow_html=True)
 
     # Disclaimer strip
     st.markdown("""
@@ -1530,7 +1597,7 @@ def page_home() -> None:
 # ════════════════════════════════════════════════════════════════════════════
 
 def page_screener(df: pd.DataFrame) -> None:
-    st.markdown("## Research Screener")
+    st.title("Research Screener")
     st.markdown('<div class="section-subtitle">Find companies worth deeper review using valuation, quality, and filing-risk signals.</div>', unsafe_allow_html=True)
 
     # Determine data source — default to model outputs, sample data as hidden fallback
@@ -4362,7 +4429,7 @@ def _pp_watchlist_tab() -> None:
 
 def page_portfolio_simulator(df: pd.DataFrame) -> None:
     """Portfolio Simulator — two-tab page: Live Paper Portfolio + Historical Replay."""
-    st.markdown("## Portfolio Simulator")
+    st.title("Portfolio Simulator")
 
     st.markdown("""
 <div class="disclaimer-box">
@@ -6575,9 +6642,10 @@ def page_about() -> None:
     </div>
     """, unsafe_allow_html=True)
 
-    tab_ov, tab_how, tab_meth, tab_bm, tab_diag, tab_uni = st.tabs(
+    # Ticker Universe tab hidden temporarily until custom ticker setup is production-ready.
+    tab_ov, tab_how, tab_meth, tab_bm, tab_diag = st.tabs(
         ["Overview", "How It Works", "Methodology", "Benchmark Comparison",
-         "Model Diagnostics", "Ticker Universe"]
+         "Model Diagnostics"]
     )
 
     with tab_ov:
@@ -6690,8 +6758,7 @@ def page_about() -> None:
     with tab_diag:
         page_model_diagnostics()
 
-    with tab_uni:
-        _render_ticker_universe_tab()
+    # tab_uni rendering removed — _render_ticker_universe_tab() kept for later use
 
 
 # ════════════════════════════════════════════════════════════════════════════
