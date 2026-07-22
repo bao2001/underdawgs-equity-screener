@@ -509,6 +509,15 @@ section[data-testid="stSidebar"],
 .section-subtitle {
     font-size: 13px; color: #64748b; margin: -8px 0 14px 0; line-height: 1.5;
 }
+
+.screener-subtitle {
+    font-size: 13px;
+    color: #64748b;
+    margin: -8px 0 40px 0;
+    line-height: 1.5;
+    display: block;
+}
+            
 /* ── Home CTA cards ─────────────────────────────────────────────────── */
 .cta-card {
     background: #ffffff;
@@ -1690,8 +1699,9 @@ def page_home() -> None:
 def page_screener(df: pd.DataFrame) -> None:
     st.markdown('<div class="ud-page-start"></div>', unsafe_allow_html=True)
     st.title("Research Screener")
-    st.markdown('<div class="section-subtitle">Find companies worth deeper review using valuation, quality, and filing-risk signals.</div>', unsafe_allow_html=True)
-
+    st.markdown('<div class="screener-subtitle">Find companies worth deeper review using valuation, quality, and filing-risk signals.</div>', unsafe_allow_html=True)
+    st.markdown('<div style="height:18px"></div>', unsafe_allow_html=True)
+    
     # Determine data source — default to model outputs, sample data as hidden fallback
     use_xbrl = mo_df is not None
     active_df = mo_df.copy() if use_xbrl else df.copy()
@@ -1793,7 +1803,7 @@ def page_screener(df: pd.DataFrame) -> None:
         sc5.metric("Mkt data fresh",    _fresh_ct if _cm_any else "—",
                    help="Tickers with current market data fetched within the last 5 hours.")
         sc6.metric("Flagged rows",      _n_flagged)
-        st.markdown('<div class="ud-gap-16"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="ud-gap-48"></div>', unsafe_allow_html=True)
 
         # Market snapshot freshness banner + refresh
         _mts_label   = "Current market unavailable"
@@ -1815,12 +1825,13 @@ def page_screener(df: pd.DataFrame) -> None:
         _fb1, _fb2 = st.columns([4, 1])
         with _fb1:
             st.markdown(
-                f'<div style="font-size:12px;color:{_mts_color};margin:6px 0 2px 0">● {_mts_label}</div>'
+                f'<div style="font-size:12px;color:{_mts_color};margin:32px 0 6px 0">● {_mts_label}</div>'
                 '<div style="font-size:11px;color:#94a3b8">Fundamentals and filing risk update when '
                 'companies file reports. Market price context updates via yfinance snapshot.</div>',
                 unsafe_allow_html=True,
             )
         with _fb2:
+            st.markdown('<div style="height:32px"></div>', unsafe_allow_html=True)
             if st.button("Refresh market snapshot", key="scr_refresh_mkt", use_container_width=True):
                 try:
                     _tkrs = active_df["Ticker"].dropna().tolist()
@@ -2240,8 +2251,13 @@ def page_screener(df: pd.DataFrame) -> None:
             st.session_state["screener_selected_company_dropdown"]    = _ticker_to_label[_reset_t]
             st.session_state["_screener_tbl_gen"]                     = st.session_state.get("_screener_tbl_gen", 0) + 1
 
-        st.caption("Click a row to inspect that company below.  Display labels are research context, not investment advice.")
-
+        st.markdown(
+            '<div style="margin-top:28px; margin-bottom:10px; color:#64748b; font-size:13px;">'
+            'Click a row to inspect that company below. Display labels are research context, not investment advice.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        
     # Generation-keyed table: incrementing the key resets visual selection state
     _tbl_key = f"screener_results_table_{st.session_state.get('_screener_tbl_gen', 0)}"
     event = st.dataframe(
