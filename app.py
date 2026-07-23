@@ -425,6 +425,7 @@ section[data-testid="stSidebar"],
     margin-bottom: 4px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    margin-bottom: 20px;
 }
 
 .current-label {
@@ -439,6 +440,7 @@ section[data-testid="stSidebar"],
     margin-bottom: 4px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    margin-bottom: 20px;
 }
 
 .ud-product-card {
@@ -506,12 +508,18 @@ section[data-testid="stSidebar"],
     background: linear-gradient(135deg, #1e3a8a 0%, #1a2744 100%);
     color: white; border-radius: 12px; padding: 20px 28px; margin-bottom: 16px;
 }
+            
+/* Move the visible Streamlit tab row down */
+[data-testid="stTabs"] div[data-baseweb="tab-list"] {
+    padding-top: 20px !important;
+}
+            
 .section-subtitle {
     font-size: 13px; color: #64748b; margin: -8px 0 14px 0; line-height: 1.5;
 }
 
 .screener-subtitle {
-    font-size: 13px;
+    font-size: 20px;
     color: #64748b;
     margin: -8px 0 40px 0;
     line-height: 1.5;
@@ -1511,6 +1519,7 @@ def _render_watchlist_button(ticker: str, row: dict, source_page: str) -> None:
     if already:
         st.button("✓ In Watchlist", key=f"wl_already_{ticker}_{source_page}", disabled=True)
     else:
+        st.markdown('<div style="height:20px"></div>', unsafe_allow_html=True)
         st.caption("Save this company to continue research later.")
         if st.button("★ Add to Watchlist", key=f"wl_add_{ticker}_{source_page}", type="primary"):
             _wl_add(
@@ -1920,6 +1929,9 @@ def page_screener(df: pd.DataFrame) -> None:
                     key="screener_show_10q",
                     help="Show latest quarterly 10-Q risk score alongside annual 10-K filing risk.",
                 )
+    st.markdown('<div style="height:14px"></div>', unsafe_allow_html=True)
+
+    st.markdown('<div style="height:32px"></div>', unsafe_allow_html=True)
 
     # Filter panel — collapsed by default
     with st.expander("Filters and sorting", expanded=False):
@@ -2057,7 +2069,8 @@ def page_screener(df: pd.DataFrame) -> None:
     elif sort_by == "Year":
         fdf = fdf.sort_values("year", ascending=False)
     fdf = fdf.reset_index(drop=True)
-    st.markdown('<div class="ud-gap-16"></div>', unsafe_allow_html=True)
+    
+    st.markdown('<div style="height:36px"></div>', unsafe_allow_html=True)
 
     # Signal distribution summary strip
     counts = {s: len(fdf[fdf["Final_Signal"] == s]) for s in SIGNAL_ORDER}
@@ -2073,7 +2086,7 @@ def page_screener(df: pd.DataFrame) -> None:
                 f'</div>',
                 unsafe_allow_html=True,
             )
-    st.markdown('<div class="ud-gap-100"></div>', unsafe_allow_html=True)
+    st.markdown('<div style="height:32px"></div>', unsafe_allow_html=True)
 
     # Build display table
     if use_xbrl:
@@ -2252,12 +2265,12 @@ def page_screener(df: pd.DataFrame) -> None:
             st.session_state["_screener_tbl_gen"]                     = st.session_state.get("_screener_tbl_gen", 0) + 1
 
         st.markdown(
-            '<div style="margin-top:28px; margin-bottom:10px; color:#64748b; font-size:13px;">'
+            '<div style="margin-top:28px; margin-bottom:10px; color:#64748b; font-size:20px;">'
             'Click a row to inspect that company below. Display labels are research context, not investment advice.'
             '</div>',
             unsafe_allow_html=True,
         )
-        
+
     # Generation-keyed table: incrementing the key resets visual selection state
     _tbl_key = f"screener_results_table_{st.session_state.get('_screener_tbl_gen', 0)}"
     event = st.dataframe(
@@ -6754,7 +6767,7 @@ def _render_ticker_universe_tab() -> None:
 
 
 def page_about() -> None:
-    st.markdown('<div class="ud-page-start"></div>', unsafe_allow_html=True)
+    st.markdown('<div style="height:72px"></div>', unsafe_allow_html=True)
     st.markdown("""
     <div class="about-hero">
       <div style="font-size:11px;color:#93c5fd;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">ABOUT UNDERDAWG</div>
@@ -6763,7 +6776,7 @@ def page_about() -> None:
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown('<div class="ud-gap-24"></div>', unsafe_allow_html=True)
+
     # Ticker Universe tab hidden temporarily until custom ticker setup is production-ready.
     tab_ov, tab_how, tab_meth, tab_bm, tab_diag = st.tabs(
         ["Overview", "How It Works", "Methodology", "Benchmark Comparison",
