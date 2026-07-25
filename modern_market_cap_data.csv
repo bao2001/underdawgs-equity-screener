@@ -1,0 +1,9 @@
+ticker,year,market_cap,price_used,shares_used,data_source,data_quality_flag
+SOFI,2017,,,,yfinance,missing_price
+SOFI,2018,,,,yfinance,missing_price
+SOFI,2019,,,,yfinance,missing_price
+SOFI,2020,,,,yfinance,missing_price
+SOFI,2021,20280138910.25963,15.8100004196167,1282741200.0,yfinance+yfinance_fast_info,ok
+SOFI,2022,5913437103.264427,4.610000133514404,1282741200.0,yfinance+yfinance_fast_info,ok
+SOFI,2023,12763274695.336533,9.949999809265137,1282741200.0,yfinance+yfinance_fast_info,ok
+SOFI,2024,19754213990.673065,15.399999618530273,1282741200.0,yfinance+yfinance_fast_info,ok

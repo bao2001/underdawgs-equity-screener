@@ -1,7 +1,27 @@
+.venv/
 __pycache__/
 *.py[cod]
-.venv/
-.env
 .DS_Store
+.env
 .streamlit/secrets.toml
 
+sec_filing_text_cache/
+sec_filing_index_cache/
+sec_company_facts_cache/
+
+paper_transactions.csv
+paper_portfolio_snapshot.csv
+paper_portfolio_history.csv
+
+XBRL/indicators_by_company.csv
+XBRL/companies.csv
+XBRL/companies.json
+
+__pycache__/
+*.pyc
+watchlist.csv
+research_notes.csv
+
+# Local generated folders
+backups/
+sec_filing_10q_cache/
