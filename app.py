@@ -9,6 +9,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import os
+import base64
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -1046,41 +1047,9 @@ _auth_email = _auth_user.get("email", "")
 
 # ── Sidebar navigation ────────────────────────────────────────────────────────
 
-_LOGO_B64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAACwAAAAsCAYAAAAehFoBAAAGA0lEQVR42u1YbWxb1Rl+"
-    "zjnXcZzEid0kdtKEZA2gdSYFQYAobdogSqdMglZMdTdYgcTJbux0dWyH0oYWXXkaoNJW"
-    "VOUHNFr5Kpq0ekJlo1KF6BAZjEBpl6HV62BMgPhIU6XLB4kd557z8qOO8KZqqkcSpsnP"
-    "z3vP+973POc9z3POBXLIIYcc/q/A5jOZYRg8Hr+GeTxnGADE49eQx3OGotGo+p+atdd7"
-    "RFzmGPatMmwYBs9kz+ePXC84q5fE3IwRMVLnAX7ml0/uOw2ALhWzaAV7vV4Ri8UkAHR0"
-    "3x/QNHEbKZpSyvzQlHJYMCGJswpNiCsZmEMq+fr4yMdPxGIxmRm7KAXPfdDnD9Yzrj3O"
-    "uBjijJ7qf2Lvh5carwe31ygl/UrKJiWp99n+/ae/SdFZtwEAtPlDqzu6I+90+kOr595x"
-    "zgGbvdF9xXc2ebzePM45GPuak3a9p9EXiLzd5g/dmplrQYslItYeCNV1dEfeaQ+E6tKM"
-    "5xGRAFCyfedDn2/b8eAJACgsca11lFddB4C1trZaAUDXgzUdgcjJtq7g1UTEsi066xky"
-    "xogR20Okdj3z5P5/6LpuASAZY/LaG27afW19fWV5eZkLwIYO373HVjevrARAdrvd1HXd"
-    "0t9/4BMF1ceZ2MMYowWULq8AgPv04Nr2QPiFNOMaAE5EHMBVXVuCqS3BsHz52LFUsbNc"
-    "tXV2kc+nNxERn4tPx8DnDx2+Vw99PzP3vDLs8XgYAAiheUnhV0TE4vE4NTQ0CMaYWra8"
-    "fv2a5lWWsfFxOXjylKW5eZVaUe+h1/8w0MAYUyMjI2kziRMRMUXqecGxEQBG0rnnHS2G"
-    "ofn84aN3BwLO9BMNAJBf1Fx79ffOvTU4qKrqvitFgYNEfrHy6QHzrcFBefv6O8Occ6Tb"
-    "hwGAz7fN3u4PH21t3WpdMAv/iR6qbA9EjqR3IAcAW2nFjQUl5S8tqaiRdctXqKLSSrI5"
-    "XGS1l9K61tvVxMS4/OvZswTgJgagpaVFm2uBNn/413f7umuzkdjLbImLeyNvFjYiMgEA"
-    "0SgVl5dfKUj9gGuaO2WafPjcCCWTSZQ6ShDp2UKbvD9Ehx5QXwwPq/sf6NtrtdubBgYG"
-    "zN9c1F/GwVIWjdsAgOjy9p+Wnb/ISQ7Nkp6oUlJsBqlhcCzXhKCx0VHWEw6SsasPTqcT"
-    "UpqIddutQklJe3Y/sqa5uemPO3Yab46dPx8eHv70pCJpI2aZTKvPvG46AsBqapaMEkjz"
-    "9/aWARAg6QDnD2lCK5mcmCDvj73Yv+8xcjqdKplMgDGG2ppaWrasTgGY2XDHHSm3u2LV"
-    "+HQCq0NDhQTkJS40Df/LMs6XShiGIaLRqCJSHxVYSm4GRCu3WLeCcEEpmdQ0jV/45xgb"
-    "eONNDkDk59tgmrOYnJjgqdSMNmua1uOvvJo3ev7c4cTE6MkDTz3XKhj7OBbbJOekbh5b"
-    "AgCgAIDk7AuJxHREK7Q7oGiG5GxQ8bzXrLZ8OnHitclT7767/r2hU50vHv3d5kOHnqbk"
-    "TGrM5So7bc2zfvb7V159G5g5lKbzHqZod2buBTOPLZGdextW3vIXUeCYKnEtjRSWVrxh"
-    "L68ip7vqWQDw3tP10zXr1hOsReMAPHPxgl9c0PZAeLPPHzmcrWlkbc2xWEwZhsE1qf3i"
-    "husbxqqWVlmnphL7OGN2ADRrypXV1dU2m4X/XZoz007Hkg8YY/GDBw9awuGwTSqFdr2n"
-    "kYGHUpjuNQyDx44cUYtyWgvteLTuPr3n/eXX3UyiwEEFTney2FVNBUvcewGg0On6tKi0"
-    "8uVMfe3s7t3YEYj8qU0Pr/hvT2vsm9w0+voedo9Nf3nw/Q/+tuHP7w0hkZgGZ9w0VXKV"
-    "QN5LBPrt1IVzXXp3byOE8EtpulOm6T/cf+CTRTsP/zvTABB9dP+djWvWHbcWl40Vu62p"
-    "0Ok+ay9bSlp+8a5Q38836sHtxzt/tu2uS8UuKoiIZa5SaekVS4scFS2FTtddhU73j/Id"
-    "jtqtW43izPHpmG//1vyfWCMilq0aLMp/iXQ+nunl2bhYDjnkkEMOOeSQw0LjKwbZl8H5"
-    "v+eVAAAAAElFtkSuQmCC"
-)
-
+with open("assets/underdawg_logo (2).png", "rb") as f:
+    _LOGO_B64 = base64.b64encode(f.read()).decode()
+    
 def set_nav_page(page_name: str) -> None:
     """Internal navigation (used by in-page buttons). Sets nav_page and reruns."""
     st.session_state["nav_page"] = page_name
