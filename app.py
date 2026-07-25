@@ -380,7 +380,7 @@ section[data-testid="stSidebar"],
     padding: 4px 12px;
     border-radius: 20px;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 620;
     letter-spacing: 0.3px;
 }
 
