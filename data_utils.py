@@ -20,6 +20,7 @@ CURRENT_MARKET_CSV               = os.path.join(_DIR, "current_market_data.csv")
 MODEL_OUTPUTS_COMBINED_CSV       = os.path.join(_DIR, "model_outputs_combined.csv")
 MODEL_OUTPUTS_CALIBRATED_CSV     = os.path.join(_DIR, "model_outputs_combined_calibrated.csv")
 MODEL_OUTPUTS_RISK_CSV           = os.path.join(_DIR, "model_outputs_combined_calibrated_risk.csv")
+MODEL_OUTPUTS_CURRENT_CSV        = os.path.join(_DIR, "model_outputs_current.csv")
 
 
 # ── Sample data ───────────────────────────────────────────────────────────────
@@ -92,6 +93,7 @@ def load_model_outputs() -> tuple:
     Returns (df, status_msg). df is None when no file exists.
     """
     _candidates = [
+        (MODEL_OUTPUTS_CURRENT_CSV,    "current"),
         (MODEL_OUTPUTS_RISK_CSV,       "risk"),
         (MODEL_OUTPUTS_CALIBRATED_CSV, "calibrated"),
         (MODEL_OUTPUTS_COMBINED_CSV,   "combined"),
@@ -165,6 +167,21 @@ def load_model_outputs() -> tuple:
         if df["final_signal_display"].isna().all():
             df["final_signal_display"] = df["Final_Signal"]
 
+        # Pass through extra columns present in the current signal layer CSV
+        _extra_passthrough = [
+            "current_signal_as_of", "latest_model_year", "latest_filing_period",
+            "market_data_as_of", "has_latest_10q_update", "signal_basis", "warning_text",
+            "current_market_cap", "current_price", "current_valuation_gap_pct",
+            "filing_risk_delta", "filing_risk_trend",
+            # True current signal layer metadata
+            "data_freshness", "latest_fundamentals_period", "latest_fundamentals_form",
+            "latest_model_feature_source", "latest_10q_period", "latest_10q_risk_score",
+            "filing_risk_score",
+        ]
+        for _ec in _extra_passthrough:
+            if _ec in raw.columns:
+                df[_ec] = raw[_ec].values
+
         # Per-share / filing metrics unavailable from XBRL market-cap model
         for col in [
             "PE_Ratio", "PB_Ratio", "EV_EBITDA", "Revenue_B", "EPS_TTM",
@@ -176,9 +193,13 @@ def load_model_outputs() -> tuple:
         n  = len(df)
         yr = int(raw["year"].max()) if "year" in raw.columns else "?"
         needs_review = (df["output_quality_flag"].str.contains("needs_review", na=False)).sum()
-        has_calibrated    = df["final_signal_calibrated"].notna().any()
-        has_risk          = df["report_risk_available"].any() if "report_risk_available" in df.columns else False
-        if src_label == "risk":
+        has_calibrated = df["final_signal_calibrated"].notna().any()
+        has_risk       = df["report_risk_available"].any() if "report_risk_available" in df.columns else False
+        is_current     = src_label == "current"
+        if is_current:
+            mkt_as_of    = df["market_data_as_of"].dropna().iloc[0] if "market_data_as_of" in df.columns and df["market_data_as_of"].notna().any() else "unknown"
+            source_note  = f" (current signal layer — market data as of {mkt_as_of})"
+        elif src_label == "risk":
             source_note = " (calibrated + filing risk, 2010–2024)"
         elif src_label == "calibrated":
             source_note = " (calibrated, 2010–2024)"

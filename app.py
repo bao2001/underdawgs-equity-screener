@@ -789,6 +789,26 @@ def _load_all_model_outputs():
     return df, f"{label}: {len(df)} rows across years {yrs}"
 
 
+@st.cache_data(ttl=300)
+def _load_current_model_raw():
+    """
+    Load model_outputs_current.csv in raw (lowercase-column) form, one row per ticker.
+    Used by Historical Replay to build shortlists for replay windows that are newer
+    than the latest historical model year. Returns (df, msg); df is None when absent.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_outputs_current.csv")
+    if not os.path.exists(path):
+        return None, "model_outputs_current.csv not found"
+    try:
+        cdf = pd.read_csv(path)
+        if cdf.empty:
+            return None, "model_outputs_current.csv is empty"
+        cdf["ticker"] = cdf["ticker"].astype(str).str.upper().str.strip()
+        return cdf, f"Current signal layer: {len(cdf)} tickers"
+    except Exception as exc:
+        return None, f"Error loading current model outputs: {exc}"
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_ticker_universe_cached() -> tuple:
     """Cached ticker universe load (1-hour TTL — refreshed after pipeline runs)."""
@@ -1688,14 +1708,21 @@ def page_screener(df: pd.DataFrame) -> None:
         if "final_signal_display" in active_df.columns:
             active_df["Final_Signal"] = active_df["final_signal_display"].fillna(active_df["Final_Signal"])
         if cm_df is not None and len(cm_df) > 0:
+            # Drop pre-baked market columns from model_outputs_current.csv before merging
+            # so the fresh snapshot always wins.
+            _mkt_cols = ["current_price", "current_market_cap", "daily_change_pct", "last_updated"]
+            active_df = active_df.drop(columns=[c for c in _mkt_cols if c in active_df.columns],
+                                        errors="ignore")
             cm_slim = cm_df[["ticker", "current_price", "current_market_cap",
                              "daily_change_pct", "last_updated"]].copy()
             cm_slim = cm_slim.rename(columns={"ticker": "Ticker"})
             cm_slim["Ticker"] = cm_slim["Ticker"].str.upper()
             active_df = active_df.merge(cm_slim, on="Ticker", how="left")
         else:
+            # Keep pre-baked values from model_outputs_current.csv if present; else NaN.
             for col in ["current_price", "current_market_cap", "daily_change_pct"]:
-                active_df[col] = np.nan
+                if col not in active_df.columns:
+                    active_df[col] = np.nan
     else:
         st.info("Model outputs unavailable. Using demo fallback data.")
 
@@ -1703,6 +1730,10 @@ def page_screener(df: pd.DataFrame) -> None:
     _q10_df, _upd_df = _load_10q_data()
     if use_xbrl and _upd_df is not None and len(_upd_df) > 0:
         try:
+            # Drop pre-baked trend/delta columns from current CSV before merge to avoid _x/_y conflicts
+            _pre_drop = ["filing_risk_trend", "filing_risk_delta"]
+            active_df = active_df.drop(columns=[c for c in _pre_drop if c in active_df.columns],
+                                        errors="ignore")
             _upd_slim = _upd_df[["ticker", "latest_10q_risk_score", "filing_risk_trend",
                                    "filing_risk_delta", "latest_10q_filing_date"]].copy()
             _upd_slim["ticker"] = _upd_slim["ticker"].str.upper()
@@ -1710,7 +1741,8 @@ def page_screener(df: pd.DataFrame) -> None:
             active_df = active_df.merge(_upd_slim, on="Ticker", how="left")
         except Exception:
             for _c in ["latest_10q_risk_score", "filing_risk_trend", "filing_risk_delta", "latest_10q_filing_date"]:
-                active_df[_c] = None
+                if _c not in active_df.columns:
+                    active_df[_c] = None
 
     # Merge universe_group into active_df for screener filter
     try:
@@ -1754,13 +1786,84 @@ def page_screener(df: pd.DataFrame) -> None:
     else:
         active_df["market_freshness"] = "missing"
 
+    # Auto-refresh stale/missing market snapshot once per browser session
+    _auto_mkt_key = "screener_auto_market_refresh_attempted"
+    _auto_refresh_needed = False
+
+    try:
+        if "last_updated" not in active_df.columns or active_df["last_updated"].dropna().empty:
+            _auto_refresh_needed = True
+        else:
+            _latest_mkt_ts = pd.to_datetime(active_df["last_updated"].dropna(), errors="coerce").max()
+            _auto_age_h = (pd.Timestamp.now() - _latest_mkt_ts).total_seconds() / 3600
+            _auto_refresh_needed = _auto_age_h > 5
+    except Exception:
+        _auto_refresh_needed = True
+
+    if use_xbrl and _auto_refresh_needed and not st.session_state.get(_auto_mkt_key, False):
+        st.session_state[_auto_mkt_key] = True
+        try:
+            _tkrs = active_df["Ticker"].dropna().astype(str).str.upper().unique().tolist()
+            if _tkrs:
+                with st.spinner("Refreshing stale market snapshot …"):
+                    fetch_current_market_data(_tkrs, save=True)
+                _load_supplementary.clear()
+                st.toast("Market snapshot refreshed.")
+                st.rerun()
+        except Exception as _auto_re:
+            st.caption(f"Auto-refresh skipped: {_auto_re}")
+
+    # Current signal layer banner (shown when model_outputs_current.csv is loaded)
+    if use_xbrl and "current_signal_as_of" in active_df.columns:
+        _cs_mkt_as_of = active_df["market_data_as_of"].dropna().iloc[0] \
+                        if "market_data_as_of" in active_df.columns and active_df["market_data_as_of"].notna().any() \
+                        else "unknown"
+        # "Fundamentals through" — the most recent fundamentals period among fresh rows
+        _fresh_periods = pd.Series(dtype=str)
+        if "data_freshness" in active_df.columns and "latest_fundamentals_period" in active_df.columns:
+            _fresh_periods = active_df.loc[
+                active_df["data_freshness"].isin(["current_ttm", "recent"]),
+                "latest_fundamentals_period",
+            ].dropna()
+        _cs_through = _fresh_periods.max() if len(_fresh_periods) else "latest available filings"
+        # Latest 10-Q risk period
+        _cs_10q_prd = active_df["latest_10q_period"].dropna().iloc[0] \
+                      if "latest_10q_period" in active_df.columns and active_df["latest_10q_period"].notna().any() \
+                      else None
+        # Freshness counts
+        _n_current = int((active_df.get("data_freshness", pd.Series()) == "current_ttm").sum())
+        _n_stale   = int(active_df.get("data_freshness", pd.Series()).isin(
+            ["stale_fundamentals", "historical_fallback"]).sum())
+        st.info(
+            f"**Current signal layer active** — fundamentals through **{_cs_through}**, "
+            f"market data as of **{_cs_mkt_as_of}**"
+            + (f", latest 10-Q risk **{_cs_10q_prd}**" if _cs_10q_prd else "")
+            + f". {_n_current} tickers on current filings"
+            + (f"; {_n_stale} on older/fallback fundamentals (see per-row warning)" if _n_stale else "")
+            + "."
+        )
+
     # Status metric cards
     if use_xbrl:
         _all_mo, _ = _load_all_model_outputs()
         _n_companies = int(active_df["Ticker"].nunique())
         _n_rows_all  = len(_all_mo) if _all_mo is not None else _n_companies
         _yrs_all     = sorted(_all_mo["year"].dropna().astype(int).unique()) if _all_mo is not None else []
-        _yr_range    = f"{_yrs_all[0]}–{_yrs_all[-1]}" if len(_yrs_all) > 1 else (str(_yrs_all[0]) if _yrs_all else "?")
+        # Data coverage: min from historical model years, max extended by current
+        # fundamentals period (e.g. 2026-Q2) when the current signal layer is active.
+        if _yrs_all:
+            _year_min = _yrs_all[0]
+            _year_max = _yrs_all[-1]
+            if "latest_fundamentals_period" in active_df.columns:
+                _fund_years = (
+                    active_df["latest_fundamentals_period"].astype(str).str.extract(r"(\d{4})")[0]
+                )
+                _fund_years = pd.to_numeric(_fund_years, errors="coerce").dropna()
+                if not _fund_years.empty:
+                    _year_max = max(_year_max, int(_fund_years.max()))
+            _yr_range = f"{_year_min}–{_year_max}" if _year_max > _year_min else str(_year_min)
+        else:
+            _yr_range = "?"
         _n_flagged   = int(active_df["output_quality_flag"].str.contains("needs_review", na=False).sum()) \
                        if "output_quality_flag" in active_df.columns else 0
         _has_risk_m  = "report_risk_available" in active_df.columns and active_df["report_risk_available"].any()
@@ -1773,7 +1876,7 @@ def page_screener(df: pd.DataFrame) -> None:
         st.markdown('<div class="ud-section-tight"></div>', unsafe_allow_html=True)
         sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
         sc1.metric("Companies",         _n_companies)
-        sc2.metric("Model year range",  _yr_range)
+        sc2.metric("Data coverage",     _yr_range)
         sc3.metric("10-K risk scores",  _risk_ct if _has_risk_m else "—",
                    help="Annual 10-K filing risk scores used in model-backed signals.")
         sc4.metric("10-Q risk scores",  _10q_ct if _has_10q_m else "—",
@@ -1819,6 +1922,12 @@ def page_screener(df: pd.DataFrame) -> None:
                     st.rerun()
                 except Exception as _re:
                     st.warning(f"Refresh failed: {_re}")
+        if "current_signal_as_of" in active_df.columns:
+            st.caption(
+                "Refreshing updates current price, current market cap, and current valuation gap live. "
+                "Estimated fair value is fundamentals-based and changes only when filings update — "
+                "re-run build_current_model_outputs.py to regenerate the calibrated current signal."
+            )
         st.markdown('<div class="ud-section-tight"></div>', unsafe_allow_html=True)
 
     # Signal toggles
@@ -2358,7 +2467,104 @@ def page_screener(df: pd.DataFrame) -> None:
 
         st.markdown('<div class="ud-gap-24"></div>', unsafe_allow_html=True)
         st.markdown('<div class="section-header">Selected Company</div>', unsafe_allow_html=True)
-        if use_xbrl:
+        # Is the true current signal layer active for this row?
+        _is_current = use_xbrl and pd.notna(row.get("current_signal_as_of"))
+        if use_xbrl and _is_current:
+            st.markdown('<div class="current-label">Current Signal Estimate</div>', unsafe_allow_html=True)
+
+            # Current-layer values (fall back gracefully where a field is absent)
+            _cfv   = row.get("Estimated_Fair_Value")
+            _cmc_r = row.get("current_market_cap")
+            _cmc_b = float(_cmc_r) / 1e9 if pd.notna(_cmc_r) and float(_cmc_r) > 0 else None
+            _cgap  = row.get("current_valuation_gap_pct")
+            if not pd.notna(_cgap):
+                _cgap = row.get("Valuation_Gap_Pct")
+            _frisk = row.get("filing_risk_score")
+            if not pd.notna(_frisk):
+                _frisk = (row.get("report_risk_score_real")
+                          if pd.notna(row.get("report_risk_score_real", None))
+                          else row.get("Report_Risk_Score"))
+
+            q1, q2, q3, q4, q5 = st.columns(5)
+            q1.metric("Current Fair Value Est.", _sfmt(_cfv, ".1f", suffix="B"),
+                      help="Model-estimated fair value from latest available fundamentals.")
+            q2.metric("Current Market Cap",      _sfmt(_cmc_b, ".1f", suffix="B"))
+            q3.metric("Current Valuation Gap",   _sfmt(_cgap, "+.1f", prefix="", suffix="%"),
+                      help="(Fair value − current market cap) / current market cap.")
+            q4.metric("Quality Score",           _sfmt(row.get("Quality_Score"), ".0f", prefix="", suffix="/100"))
+            q5.metric("Filing Risk",             _sfmt(_frisk, ".0f", prefix="", suffix="/100"))
+
+            # Freshness context line
+            _fund_prd  = str(row.get("latest_fundamentals_period") or "?")
+            _fund_form = str(row.get("latest_fundamentals_form") or "")
+            _mkt_as_of = str(row.get("market_data_as_of") or "?")
+            _q10_prd   = str(row.get("latest_10q_period") or "")
+            _ctx = (f"**Fundamentals Period:** {_fund_prd}"
+                    + (f" ({_fund_form})" if _fund_form and _fund_form != "nan" else "")
+                    + f"  ·  **Market Data As Of:** {_mkt_as_of}"
+                    + (f"  ·  **Latest 10-Q Risk:** {_q10_prd}" if _q10_prd and _q10_prd != "nan" else ""))
+            st.markdown(
+            f'<div style="font-size:12.5px;color:#475569;margin:6px 0 16px 0;line-height:1.45;">{_ctx}</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                '<div style="font-size:13px;color:#6b7280;margin:0 0 26px 0;line-height:1.45;">'
+                'Current signal uses latest available fundamentals, latest filing-risk context, '
+                'and the latest market snapshot. Historical model-year values are used only for '
+                'replay/backtest context.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+            # Amber warning for stale / fallback fundamentals
+            if str(row.get("data_freshness") or "") in ("stale_fundamentals", "historical_fallback"):
+                st.warning(
+                    "This company uses older/fallback fundamentals because recent SEC "
+                    "fundamentals were not available."
+                )
+
+            st.markdown('<div style="height:16px"></div>', unsafe_allow_html=True)
+
+            # Market-only snapshot (no duplicate market cap — shown above)
+            if cm_df is not None:
+                cm_match2 = cm_df[cm_df["ticker"].str.upper() == chosen.upper()]
+                if len(cm_match2) > 0:
+                    cm_r = cm_match2.iloc[0]
+                    st.markdown('<div class="current-label">Current Market Snapshot</div>', unsafe_allow_html=True)
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Current Price",   _sfmt(cm_r.get("current_price")))
+                    m2.metric("Daily Change",    _sfmt(cm_r.get("daily_change_pct"), "+.2f", prefix="", suffix="%"))
+                    last_u = str(cm_r.get("last_updated", ""))[:10]
+                    m3.metric("Market Data As Of", last_u or "N/A")
+
+            # Historical model-year comparison — tucked into an optional expander
+            _hist_all, _ = _load_all_model_outputs()
+            if _hist_all is not None:
+                _hm = _hist_all[_hist_all["ticker"].str.upper() == chosen.upper()]
+                if len(_hm) > 0:
+                    _hrow = _hm.sort_values("year").iloc[-1]
+                    with st.expander("Historical model-year comparison"):
+                        st.caption(
+                            "Model-year values (used for Historical Replay / backtest context only). "
+                            "These are not the current signal."
+                        )
+                        h1, h2, h3, h4 = st.columns(4)
+                        h1.metric("Model Year", str(int(_hrow.get("year", 0))))
+                        h2.metric("Model-Year Market Cap",
+                                  _sfmt(_hrow.get("actual_market_cap", np.nan) / 1e9
+                                        if pd.notna(_hrow.get("actual_market_cap", None)) else None,
+                                        ".1f", suffix="B"))
+                        h3.metric("Model-Year Valuation Gap",
+                                  _sfmt(_hrow.get("valuation_gap_pct"), "+.1f", prefix="", suffix="%"))
+                        _orig_sig = str(_hrow.get("final_signal_display")
+                                        or _hrow.get("final_signal") or "—")
+                        h4.metric("Original Historical Signal", "")
+                        h4.markdown(
+                            f'<div style="font-size:13px;font-weight:600;color:'
+                            f'{SIGNAL_COLORS.get(_orig_sig, "#475569")}">{_orig_sig}</div>',
+                            unsafe_allow_html=True,
+                        )
+        elif use_xbrl:
+            # Current layer not active — legacy historical model output view
             st.markdown('<div class="data-label">Historical Model Output</div>', unsafe_allow_html=True)
             q1, q2, q3, q4, q5 = st.columns(5)
             q1.metric("Actual Mkt Cap",  _sfmt(row.get("Market_Cap_B"), ".1f", suffix="B"))
@@ -2781,6 +2987,21 @@ def _xbrl_company_detail(mo: pd.DataFrame) -> None:
     # ── Overview ──────────────────────────────────────────────────────────────
     with tab_ov:
         st.markdown('<div class="ud-tabs-spacer"></div>', unsafe_allow_html=True)
+
+        # Current signal basis (shown when the current signal layer is active)
+        _cd_basis = str(row.get("signal_basis", "") or "")
+        if _cd_basis:
+            _cd_period = str(row.get("latest_fundamentals_period", "") or "?")
+            _cd_10q    = str(row.get("latest_10q_period", "") or "")
+            _cd_fresh  = str(row.get("data_freshness", "") or "")
+            _cd_msg = (f"**Current signal basis:** {_cd_basis}. "
+                       f"Fundamentals period: **{_cd_period}**"
+                       + (f", latest 10-Q risk: **{_cd_10q}**" if _cd_10q and _cd_10q != "nan" else "") + ".")
+            if _cd_fresh in ("historical_fallback", "stale_fundamentals"):
+                st.warning(_cd_msg + " " + str(row.get("warning_text", "")))
+            else:
+                st.info(_cd_msg)
+
         st.markdown('<div class="data-label">Historical Model Output</div>', unsafe_allow_html=True)
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Actual Market Cap",   _sfmt(row.get("Market_Cap_B"), ".2f", suffix="B"))
@@ -2833,7 +3054,7 @@ def _xbrl_company_detail(mo: pd.DataFrame) -> None:
         _render_explanation(row.to_dict())
         st.divider()
         st.warning(
-            "**Limitations:** Historical data only (2010–2024). "
+            "**Limitations:** Historical data only (2010–2026). "
             "In-sample predictions for training-period companies. "
             "29 tech-heavy companies. Not investment advice."
         )
@@ -3276,9 +3497,9 @@ research without replacing that research:
 
     st.markdown('<div class="section-header">Data Sources</div>', unsafe_allow_html=True)
     st.markdown("""
-**Underdawg Model Layer (29 companies, 2010–2024):**
+**Underdawg Model Layer (29 companies, 2010–2026):**
 - Legacy (2010–2016): XBRL financial statements from SEC EDGAR
-- Modern (2017–2024): SEC EDGAR Company Facts API (annual GAAP fundamentals)
+- Modern (2017–2026): SEC EDGAR Company Facts API (annual GAAP fundamentals)
 - Market cap estimated as: historical year-end price (split-adjusted) × shares outstanding
 - Model target: log(market_cap)
 - Features: 16 derived financial ratios and growth metrics
@@ -3293,10 +3514,10 @@ research without replacing that research:
     sc1, sc2 = st.columns(2, gap="large")
 
     with sc1:
-        st.markdown("##### Underdawg Valuation Model (2010–2024)")
+        st.markdown("##### Underdawg Valuation Model (2010–2026)")
         st.markdown("""
 A Ridge Regression model trained on 361 company-year observations (29 companies,
-2010–2024, legacy XBRL + modern SEC). The model predicts **log(market_cap)** from 16
+2010–2026, legacy XBRL + modern SEC). The model predicts **log(market_cap)** from 16
 financial features.
 
 Legacy-era best model: **Ridge Regression**
@@ -4083,7 +4304,7 @@ def page_model_diagnostics() -> None:
         st.markdown("""
 | Limitation | Detail |
 |---|---|
-| **Training set** | 361 company-year rows, 29 companies, 2010–2024. Legacy era validated; cross-era generalization is weak (see Combined Model Validation below). |
+| **Training set** | 361 company-year rows, 29 companies, 2010–2026. Legacy era validated; cross-era generalization is weak (see Combined Model Validation below). |
 | **Tech-sector concentration** | Training universe is predominantly technology companies. May not generalize to other sectors. |
 | **In-sample predictions** | model_outputs.csv uses the 80%-trained model applied to all 137 rows. 80% carry in-sample bias. |
 | **Row-based train/test split** | The current 80/20 split is row-based, so the same company can appear in both train and test sets across different years. This makes test metrics optimistic. A company-level or time-based split (e.g., train on 2010–2014, test on 2015–2016) should be used next to get unbiased estimates. |
@@ -4105,12 +4326,12 @@ def page_model_diagnostics() -> None:
 
     # ── Combined Model Validation ─────────────────────────────────────────────
     st.divider()
-    st.markdown("### Combined Model Validation (2010–2024)")
+    st.markdown("### Combined Model Validation (2010–2026)")
     st.caption(
         "This validation tests whether the model generalizes across the modern SEC fundamentals period, "
         "not only the original 2010–2016 XBRL dataset. "
         "Four splits are evaluated: random row split, company-level split, legacy→modern time split, "
-        "and pre-2021→2021–2024 time split."
+        "and pre-2021→2021–2026 time split."
     )
     _COMBINED_VAL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                        "combined_model_validation_comparison.csv")
@@ -4635,8 +4856,9 @@ def _pp_replay_tab(df: pd.DataFrame) -> None:
     st.markdown("### Historical Replay")
     st.caption(
         "Pick an exact start date and holding period. "
-        "The replay uses the model signal from the start date's year (if available) "
-        "and plots daily portfolio value alongside the chosen benchmark."
+        "For dates within the historical model years the replay uses that year's model signal; "
+        "for recent dates beyond them it uses the current signal layer. "
+        "Price data always comes from your selected date range."
     )
 
     all_mo, all_mo_msg = _load_all_model_outputs()
@@ -4716,27 +4938,66 @@ def _pp_replay_tab(df: pd.DataFrame) -> None:
             "Returns reflect a partial holding period."
         )
 
-    # ── Model signal year badge ───────────────────────────────────────────────
-    signal_year  = start_date.year
-    model_backed = signal_year in avail_years
-    if model_backed:
-        st.success(
-            f"**Model-backed replay** — using {signal_year} annual fundamentals "
-            "as the research signal."
+    # ── Signal source selection ───────────────────────────────────────────────
+    _requested_year = start_date.year
+    current_df, _current_msg = _load_current_model_raw()
+
+    # The current signal layer takes precedence when the replay window is newer than
+    # the latest historical model year AND model_outputs_current.csv exists. This makes
+    # the shortlist match the Research Screener (current fundamentals + current gaps).
+    _current_mode = (
+        bool(avail_years) and _requested_year > most_recent_yr and current_df is not None
+    )
+    # Only fall back to the latest historical year when the current layer is unavailable.
+    _using_fallback_year = (
+        not _current_mode and _requested_year not in avail_years and bool(avail_years)
+    )
+
+    if _current_mode:
+        signal_year      = _requested_year
+        model_backed     = True
+        signal_source_df = current_df.copy()
+        # Shortlist "Filing Risk" should reflect the current filing-risk score
+        if "filing_risk_score" in signal_source_df.columns:
+            signal_source_df["report_risk_score_real"] = signal_source_df["filing_risk_score"]
+        st.caption(
+            "Using current signal layer for this recent replay window. "
+            "Replay prices use the selected date range."
         )
     else:
-        yrs_str = ", ".join(str(y) for y in avail_years)
-        st.info(
-            f"**Price-only replay** — no model signal for {signal_year}. "
-            f"Available signal years: {yrs_str}. Enter tickers manually below."
-        )
+        signal_year      = most_recent_yr if _using_fallback_year else _requested_year
+        model_backed     = signal_year in avail_years
+        signal_source_df = (all_mo[all_mo["year"] == signal_year].copy()
+                            if model_backed else None)
+        if model_backed and not _using_fallback_year:
+            st.success(
+                f"**Model-backed replay** — using {signal_year} annual fundamentals "
+                "as the research signal."
+            )
+        elif model_backed and _using_fallback_year:
+            st.info(
+                f"**Using latest available model signal year: {signal_year}.** "
+                f"No model output exists for {_requested_year}. "
+                "Replay prices use your selected date range."
+            )
+            st.caption(
+                f"Model signals are based on {signal_year} fundamentals "
+                "and may not reflect newer filings or events."
+            )
+        else:
+            yrs_str = ", ".join(str(y) for y in avail_years)
+            st.info(
+                "No model outputs available."
+                + (f" Available signal years when data is loaded: {yrs_str}." if yrs_str else "")
+                + " Enter tickers manually below for a price-only replay."
+            )
 
     # ── Calibrated signal toggle (only when calibrated data available) ────────
     _replay_has_calibrated = (
         model_backed
-        and "final_signal_calibrated" in all_mo.columns
-        and all_mo[all_mo["year"] == signal_year]["final_signal_calibrated"].notna().any()
-        if model_backed else False
+        and signal_source_df is not None
+        and "final_signal_calibrated" in signal_source_df.columns
+        and signal_source_df["final_signal_calibrated"].notna().any()
     )
     use_calib_replay = False
     if _replay_has_calibrated:
@@ -4755,9 +5016,9 @@ def _pp_replay_tab(df: pd.DataFrame) -> None:
     _replay_has_risk = (
         model_backed
         and use_calib_replay
-        and "final_signal_calibrated_risk_adjusted" in all_mo.columns
-        and all_mo[all_mo["year"] == signal_year]["final_signal_calibrated_risk_adjusted"].notna().any()
-        if model_backed else False
+        and signal_source_df is not None
+        and "final_signal_calibrated_risk_adjusted" in signal_source_df.columns
+        and signal_source_df["final_signal_calibrated_risk_adjusted"].notna().any()
     )
     use_risk_replay = False
     if _replay_has_risk:
@@ -4827,7 +5088,7 @@ def _pp_replay_tab(df: pd.DataFrame) -> None:
     # ── Ticker selection ──────────────────────────────────────────────────────
     top_df = None  # set inside model_backed path; used by allocation section
     if model_backed:
-        year_df = all_mo[all_mo["year"] == signal_year].copy()
+        year_df = signal_source_df.copy()
         if exclude_nr:
             year_df = year_df[
                 ~year_df["output_quality_flag"].str.contains("needs_review", na=False)
@@ -5287,9 +5548,12 @@ Signal year: <strong>{params['signal_year']}</strong> {mo_note}
         contrib_pct = _wpct / 100 * ret_pct  # contribution to portfolio return
         total_end_val += end_val
 
-        match_row = all_mo[
-            (all_mo["ticker"] == t) & (all_mo["year"] == params["signal_year"])
-        ]
+        if _current_mode:
+            match_row = current_df[current_df["ticker"] == t]
+        else:
+            match_row = all_mo[
+                (all_mo["ticker"] == t) & (all_mo["year"] == params["signal_year"])
+            ]
         signal  = match_row["final_signal"].iloc[0]      if not match_row.empty else ""
         vgap    = match_row["valuation_gap_pct"].iloc[0] if not match_row.empty else None
         quality = match_row["quality_score"].iloc[0]     if not match_row.empty else None
@@ -6769,7 +7033,7 @@ def page_about() -> None:
             nr_count     = int(all_mo["output_quality_flag"].str.contains("needs_review", na=False).sum()) \
                            if "output_quality_flag" in all_mo.columns else 0
         else:
-            n_companies = 29; n_rows = 361; year_range = "2010–2024"; n_replay_yrs = 15; nr_count = 0
+            n_companies = 29; n_rows = 361; year_range = "2010–2026"; n_replay_yrs = 15; nr_count = 0
 
         st.markdown('<div class="ud-section"></div>', unsafe_allow_html=True)
         st.markdown("#### By the Numbers")
@@ -6829,7 +7093,7 @@ def page_about() -> None:
         step_cols = st.columns(4)
         _STEPS_H = [
             ("1", "Data Collection",
-             "XBRL + SEC EDGAR fundamentals (2010–2024). Legacy XBRL + modern Company Facts API."),
+             "XBRL + SEC EDGAR fundamentals (2010–2026). Legacy XBRL + modern Company Facts API."),
             ("2", "Scoring",
              "Ridge Regression predicts log(market_cap). Quality from ROE, margins, growth, debt. Filing risk from 10-K text."),
             ("3", "Signal Assignment",
