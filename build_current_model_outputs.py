@@ -34,6 +34,10 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from model_utils import compute_signal
+from calibrate_signals import _assign_bucket, assign_calibrated
+from filing_risk_utils import _risk_adjust_signal
+
 warnings.filterwarnings("ignore")
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -239,61 +243,13 @@ def _engineer(row: dict) -> dict:
     return out
 
 
-# ── Signal helpers (mirror model_utils / calibrate_signals / filing_risk_utils) ─
+# ── Signal helpers (shared logic lives in model_utils / calibrate_signals / filing_risk_utils) ─
 
 def _compute_signal(val_gap, quality, risk) -> str:
+    """model_utils.compute_signal plus guards for missing gap/quality/risk."""
     if pd.isna(val_gap) or pd.isna(quality):
         return "Fairly valued / neutral"
-    risk_v = float(risk) if pd.notna(risk) else 50.0
-    val_gap = float(val_gap); quality = float(quality)
-    if val_gap > 15 and quality < 45:
-        return "Possible value trap"
-    if val_gap > 20 and quality >= 65 and risk_v < 40:
-        return "High-priority research candidate"
-    if val_gap > 10 and quality >= 50:
-        return "Research candidate"
-    if -10 <= val_gap <= 10:
-        return "Fairly valued / neutral"
-    if val_gap < -10:
-        return "Potentially overvalued"
-    return "Research candidate"
-
-
-def _assign_bucket(pct, flag="ok") -> str:
-    if "needs_review" in str(flag):
-        return "Needs review"
-    if pd.isna(pct):
-        return "Neutral relative value"
-    if pct >= 90: return "Top decile relative value"
-    if pct >= 70: return "Above-average relative value"
-    if pct >= 40: return "Neutral relative value"
-    if pct >= 20: return "Below-average relative value"
-    return "Low relative value"
-
-
-def _assign_calibrated(bucket, quality, flag="ok") -> str:
-    if "needs_review" in str(flag):
-        return "Needs review"
-    quality = float(quality) if pd.notna(quality) else 50.0
-    if bucket in ("Top decile relative value", "Above-average relative value"):
-        return "Possible value trap" if quality < 45 else "Research candidate"
-    if bucket == "Neutral relative value":
-        return "Fairly valued / neutral"
-    return "Potentially overvalued"
-
-
-def _risk_adjust(calib_sig, risk_score, quality, has_real) -> tuple:
-    if not has_real or pd.isna(risk_score):
-        return calib_sig, "no_real_filing_risk_data"
-    rs = float(risk_score); q = float(quality) if pd.notna(quality) else 50.0
-    if rs >= 80 and calib_sig == "Research candidate":
-        if q < 45:
-            return "Possible value trap", f"Risk-adjusted: very high filing risk ({rs:.0f}/100) + low quality."
-        return "Fairly valued / neutral", (
-            f"Risk-adjusted: very high filing risk ({rs:.0f}/100). Downgraded from Research candidate.")
-    if rs >= 90 and calib_sig == "Fairly valued / neutral":
-        return calib_sig, f"Caution: extreme filing risk ({rs:.0f}/100)."
-    return calib_sig, ""
+    return compute_signal(float(val_gap), float(quality), float(risk) if pd.notna(risk) else 50.0)
 
 
 def _quality_scores(df: pd.DataFrame) -> pd.Series:
@@ -506,11 +462,11 @@ def build(verbose: bool = True) -> pd.DataFrame | None:
     df["valuation_bucket_year"] = df.apply(
         lambda r: _assign_bucket(r["valuation_gap_percentile_year"], r["output_quality_flag"]), axis=1)
     df["final_signal_calibrated"] = df.apply(
-        lambda r: _assign_calibrated(r["valuation_bucket_year"], r["quality_score"], r["output_quality_flag"]),
+        lambda r: assign_calibrated(r["valuation_bucket_year"], r["quality_score"], r["output_quality_flag"]),
         axis=1)
 
     adj = df.apply(
-        lambda r: _risk_adjust(
+        lambda r: _risk_adjust_signal(
             r["final_signal_calibrated"], r["filing_risk_score"], r["quality_score"],
             bool(r["report_risk_available"]) or bool(r["has_latest_10q_update"])),
         axis=1, result_type="expand")

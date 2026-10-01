@@ -82,22 +82,25 @@ def _assign_bucket(pct: float, flag: str = "ok") -> str:
 
 # ── Calibrated signal from bucket + quality ────────────────────────────────────
 
-def _assign_calibrated_signal(row) -> str:
-    flag    = str(row.get("output_quality_flag", "ok"))
-    if "needs_review" in flag:
+def assign_calibrated(bucket: str, quality, flag: str = "ok") -> str:
+    """Calibrated signal from a valuation bucket + quality score (missing quality -> 50)."""
+    if "needs_review" in str(flag):
         return "Needs review"
-
-    bucket  = row.get("valuation_bucket_year", "Neutral relative value")
-    quality = float(row.get("quality_score", 50) or 50)
-
+    quality = float(quality) if pd.notna(quality) else 50.0
     if bucket in ("Top decile relative value", "Above-average relative value"):
-        if quality < 45:
-            return "Possible value trap"
-        return "Research candidate"
+        return "Possible value trap" if quality < 45 else "Research candidate"
     if bucket == "Neutral relative value":
         return "Fairly valued / neutral"
     # Below-average or Low relative value
     return "Potentially overvalued"
+
+
+def _assign_calibrated_signal(row) -> str:
+    return assign_calibrated(
+        row.get("valuation_bucket_year", "Neutral relative value"),
+        row.get("quality_score", 50),
+        row.get("output_quality_flag", "ok"),
+    )
 
 
 # ── Calibration warning text ───────────────────────────────────────────────────

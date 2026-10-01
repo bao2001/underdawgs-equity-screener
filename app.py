@@ -35,9 +35,7 @@ from ticker_setup_utils import (
     prepare_single_ticker_current_market,
 )
 from paper_portfolio_utils import (
-    load_paper_portfolio, save_paper_portfolio,
-    load_paper_transactions, save_paper_transactions,
-    load_portfolio_history, save_portfolio_history,
+    load_paper_portfolio, load_paper_transactions, load_portfolio_history,
     initialize_paper_account, get_available_tickers,
     get_trade_price, get_company_name, get_signal_metadata,
     execute_paper_trade, calculate_holdings, calculate_portfolio_value,
@@ -46,7 +44,10 @@ from paper_portfolio_utils import (
     update_portfolio_history, compare_to_benchmark,
     generate_portfolio_history, generate_portfolio_report,
     ACTION_BUY, ACTION_SELL, DEFAULT_STARTING_CASH,
-    fetch_replay_prices, fetch_replay_daily_prices,
+    fetch_replay_daily_prices,
+)
+from ui_helpers import (
+    market_freshness, fmt_billions, fmt_signed_pct, fmt_usd, color_signed, pill_badge_html,
 )
 from model_utils import (
     SIGNAL_COLORS, SIGNAL_BG_COLORS, SIGNAL_ORDER,
@@ -735,15 +736,6 @@ def _load_sample(use_live: bool) -> tuple:
     return get_screener_data(use_live=use_live)
 
 
-@st.cache_data(show_spinner=False)
-def _cached_diagnostics() -> tuple:
-    try:
-        from real_model_utils import run_diagnostics
-        return run_diagnostics()
-    except Exception as exc:
-        return {"status": "import_error", "error": str(exc)}, None
-
-
 @st.cache_data(ttl=300)
 def _load_supplementary() -> tuple:
     """Load model outputs, current market data, and 10-Q risk update (cached 5 min)."""
@@ -813,12 +805,6 @@ def _load_current_model_raw():
 def _load_ticker_universe_cached() -> tuple:
     """Cached ticker universe load (1-hour TTL — refreshed after pipeline runs)."""
     return load_ticker_universe()
-
-
-@st.cache_data(ttl=3600)
-def _fetch_replay_prices_cached(tickers_tuple: tuple, start_year: int, holding_months: int) -> dict:
-    """Cached wrapper around fetch_replay_prices. Uses tuple key for hashability."""
-    return fetch_replay_prices(list(tickers_tuple), start_year, holding_months)
 
 
 @st.cache_data(ttl=3600)
@@ -1774,14 +1760,8 @@ def page_screener(df: pd.DataFrame) -> None:
 
     # Per-ticker market freshness flag (fresh ≤5h, stale >5h, missing)
     if "last_updated" in active_df.columns:
-        def _fresh_flag(ts):
-            try:
-                age_h = (pd.Timestamp.now() - pd.to_datetime(ts)).total_seconds() / 3600
-                return "fresh" if age_h <= 5 else "stale"
-            except Exception:
-                return "unknown"
         active_df["market_freshness"] = active_df["last_updated"].apply(
-            lambda x: _fresh_flag(x) if pd.notna(x) else "missing"
+            lambda x: market_freshness(x) if pd.notna(x) else "missing"
         )
     else:
         active_df["market_freshness"] = "missing"
@@ -2210,21 +2190,16 @@ def page_screener(df: pd.DataFrame) -> None:
     src_cols = [c for c in desired if c in fdf.columns]
     display  = fdf[src_cols].copy().rename(columns={k: v for k, v in col_rename.items() if k in src_cols})
 
-    def _fmt_b(x):
-        return f"${x:.1f}B" if pd.notna(x) else "N/A"
-    def _fmt_pct(x):
-        return f"{x:+.1f}%" if pd.notna(x) else "N/A"
-
-    if "Model MC (B)"        in display.columns: display["Model MC (B)"]        = display["Model MC (B)"].map(_fmt_b)
+    if "Model MC (B)"        in display.columns: display["Model MC (B)"]        = display["Model MC (B)"].map(fmt_billions)
     if "Live MC (B)"         in display.columns: display["Live MC (B)"]         = display["Live MC (B)"].map(lambda x: f"${x/1e9:.1f}B" if pd.notna(x) and x > 0 else "N/A")
-    if "Est. Value (B)"      in display.columns: display["Est. Value (B)"]      = display["Est. Value (B)"].map(_fmt_b)
-    if "Model Gap %"         in display.columns: display["Model Gap %"]         = display["Model Gap %"].map(_fmt_pct)
-    if "Current Gap %"       in display.columns: display["Current Gap %"]       = display["Current Gap %"].map(_fmt_pct)
-    if "Daily Chg %"         in display.columns: display["Daily Chg %"]         = display["Daily Chg %"].map(_fmt_pct)
+    if "Est. Value (B)"      in display.columns: display["Est. Value (B)"]      = display["Est. Value (B)"].map(fmt_billions)
+    if "Model Gap %"         in display.columns: display["Model Gap %"]         = display["Model Gap %"].map(fmt_signed_pct)
+    if "Current Gap %"       in display.columns: display["Current Gap %"]       = display["Current Gap %"].map(fmt_signed_pct)
+    if "Daily Chg %"         in display.columns: display["Daily Chg %"]         = display["Daily Chg %"].map(fmt_signed_pct)
     if "Live Price"          in display.columns: display["Live Price"]          = display["Live Price"].map(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
     if "Market Price ($)"    in display.columns: display["Market Price ($)"]    = display["Market Price ($)"].map("${:.2f}".format)
     if "Est. Fair Value ($)" in display.columns: display["Est. Fair Value ($)"] = display["Est. Fair Value ($)"].map("${:.2f}".format)
-    if "Valuation Gap (%)"   in display.columns: display["Valuation Gap (%)"]   = display["Valuation Gap (%)"].map(_fmt_pct)
+    if "Valuation Gap (%)"   in display.columns: display["Valuation Gap (%)"]   = display["Valuation Gap (%)"].map(fmt_signed_pct)
 
     def _gap_label(v):
         try: v = float(v)
@@ -2613,11 +2588,7 @@ def page_screener(df: pd.DataFrame) -> None:
                 elif _gv >= -5: _gbg, _gfg, _gdesc = "#f1f5f9", "#475569", "Neutral"
                 elif _gv >= -20: _gbg, _gfg, _gdesc = "#fff7ed", "#c2410c", "Stretched"
                 else:           _gbg, _gfg, _gdesc = "#fee2e2", "#b91c1c", "Deep Stretched"
-                _bp.append(
-                    f'<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;'
-                    f'font-weight:600;background:{_gbg};color:{_gfg};border:1px solid {_gfg};margin:2px 4px 2px 0">'
-                    f'<span style="font-weight:400;opacity:0.8">Gap: </span>{_gv:+.1f}% {_gdesc}</span>'
-                )
+                _bp.append(pill_badge_html('Gap', f'{_gv:+.1f}% {_gdesc}', _gbg, _gfg))
             _fr_raw = row.get("report_risk_score_real")
             if not pd.notna(_fr_raw):
                 _fr_raw = row.get("Report_Risk_Score")
@@ -2627,11 +2598,7 @@ def page_screener(df: pd.DataFrame) -> None:
                 elif _frv < 50: _frbg, _frfg, _frlvl = "#fef9c3", "#a16207", "Moderate"
                 elif _frv < 70: _frbg, _frfg, _frlvl = "#ffedd5", "#c2410c", "Elevated"
                 else:           _frbg, _frfg, _frlvl = "#fee2e2", "#b91c1c", "High"
-                _bp.append(
-                    f'<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;'
-                    f'font-weight:600;background:{_frbg};color:{_frfg};border:1px solid {_frfg};margin:2px 4px 2px 0">'
-                    f'<span style="font-weight:400;opacity:0.8">10-K Risk: </span>{_frv:.0f}/100 {_frlvl}</span>'
-                )
+                _bp.append(pill_badge_html('10-K Risk', f'{_frv:.0f}/100 {_frlvl}', _frbg, _frfg))
             _qr_raw = row.get("latest_10q_risk_score")
             if pd.notna(_qr_raw):
                 _qrv = float(_qr_raw)
@@ -2639,11 +2606,7 @@ def page_screener(df: pd.DataFrame) -> None:
                 elif _qrv < 50: _qrbg, _qrfg, _qrlvl = "#fef9c3", "#a16207", "Moderate"
                 elif _qrv < 70: _qrbg, _qrfg, _qrlvl = "#ffedd5", "#c2410c", "Elevated"
                 else:           _qrbg, _qrfg, _qrlvl = "#fee2e2", "#b91c1c", "High"
-                _bp.append(
-                    f'<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;'
-                    f'font-weight:600;background:{_qrbg};color:{_qrfg};border:1px solid {_qrfg};margin:2px 4px 2px 0">'
-                    f'<span style="font-weight:400;opacity:0.8">10-Q Risk: </span>{_qrv:.0f}/100 {_qrlvl}</span>'
-                )
+                _bp.append(pill_badge_html('10-Q Risk', f'{_qrv:.0f}/100 {_qrlvl}', _qrbg, _qrfg))
             _tr_raw = row.get("filing_risk_trend", "")
             if pd.notna(_tr_raw) and str(_tr_raw).strip():
                 _ts = str(_tr_raw).strip().lower()
@@ -2651,11 +2614,7 @@ def page_screener(df: pd.DataFrame) -> None:
                 elif "incr" in _ts: _tbg, _tfg, _tlbl = "#fee2e2", "#b91c1c", "Increasing"
                 elif "stab" in _ts: _tbg, _tfg, _tlbl = "#f1f5f9", "#475569", "Stable"
                 else:               _tbg, _tfg, _tlbl = "#f1f5f9", "#475569", str(_tr_raw).strip().title()
-                _bp.append(
-                    f'<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;'
-                    f'font-weight:600;background:{_tbg};color:{_tfg};border:1px solid {_tfg};margin:2px 4px 2px 0">'
-                    f'<span style="font-weight:400;opacity:0.8">Trend: </span>{_tlbl}</span>'
-                )
+                _bp.append(pill_badge_html('Trend', f'{_tlbl}', _tbg, _tfg))
             _dq_raw = row.get("output_quality_flag", "")
             if pd.notna(_dq_raw) and str(_dq_raw).strip():
                 _dqs = str(_dq_raw).strip().lower()
@@ -2665,11 +2624,7 @@ def page_screener(df: pd.DataFrame) -> None:
                 if _dql == "Clean":                 _dqbg, _dqfg = "#dcfce7", "#15803d"
                 elif _dql == "Neutral Report Risk": _dqbg, _dqfg = "#fef9c3", "#a16207"
                 else:                               _dqbg, _dqfg = "#fee2e2", "#b91c1c"
-                _bp.append(
-                    f'<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;'
-                    f'font-weight:600;background:{_dqbg};color:{_dqfg};border:1px solid {_dqfg};margin:2px 4px 2px 0">'
-                    f'<span style="font-weight:400;opacity:0.8">Data Quality: </span>{_dql}</span>'
-                )
+                _bp.append(pill_badge_html('Data Quality', f'{_dql}', _dqbg, _dqfg))
             if _bp:
                 st.markdown('<div style="margin:8px 0 6px 0">' + "".join(_bp) + "</div>", unsafe_allow_html=True)
 
@@ -3907,15 +3862,8 @@ def page_model_diagnostics() -> None:
         except Exception:
             _cd_age_h = None
 
-        def _cd_freshness(ts):
-            try:
-                age_h = (pd.Timestamp.now() - pd.to_datetime(ts)).total_seconds() / 3600
-                return "fresh" if age_h <= 5 else "stale"
-            except Exception:
-                return "unknown"
-
         _cd_cm_df["_freshness"] = _cd_cm_df["last_updated"].apply(
-            lambda x: _cd_freshness(x) if pd.notna(x) else "missing"
+            lambda x: market_freshness(x) if pd.notna(x) else "missing"
         )
         _cd_n_fresh   = int((_cd_cm_df["_freshness"] == "fresh").sum())
         _cd_n_stale   = int((_cd_cm_df["_freshness"] == "stale").sum())
@@ -4844,11 +4792,6 @@ def _compute_profile_weights_replay(top_df, tickers: list, profile: str = "balan
     if tickers and diff != 0:
         weights[tickers[0]] = round(weights[tickers[0]] + diff, 1)
     return weights
-
-
-def _compute_model_weights_replay(top_df, tickers: list) -> dict:
-    """Backward-compat shim — delegates to balanced profile."""
-    return _compute_profile_weights_replay(top_df, tickers, profile="balanced")
 
 
 def _pp_replay_tab(df: pd.DataFrame) -> None:
@@ -5855,17 +5798,10 @@ Signal year: <strong>{params['signal_year']}</strong> {mo_note}
                 lambda v: f"${v:,.2f}" if pd.notna(v) else "—"
             )
 
-        def _color_ret(val):
-            try:
-                v = float(str(val).replace("%", "").replace("+", ""))
-                return "color:#27ae60;font-weight:600" if v >= 0 else "color:#c0392b;font-weight:600"
-            except Exception:
-                return ""
-
         try:
             st.dataframe(
                 display_df.style.applymap(
-                    _color_ret, subset=["Return %", "Contribution %"]
+                    color_signed, subset=["Return %", "Contribution %"]
                 ),
                 use_container_width=True, hide_index=True,
             )
@@ -6402,17 +6338,6 @@ def _pp_live_tab(df: pd.DataFrame) -> None:
             total_portfolio_value=total_val,
         )
         if not pos_df.empty:
-            def _color_signed(val):
-                try:
-                    v = float(str(val).replace("$","").replace(",","").replace("+",""))
-                    return "color:#27ae60;font-weight:600" if v >= 0 else "color:#c0392b;font-weight:600"
-                except Exception:
-                    return ""
-
-            def _fmt_cur(v):
-                try: return f"${float(v):,.2f}"
-                except: return str(v)
-
             display_cols = [
                 "Ticker", "Company", "Qty", "Avg Cost", "Price",
                 "Market Value", "Cost Basis",
@@ -6424,7 +6349,7 @@ def _pp_live_tab(df: pd.DataFrame) -> None:
             for col in ["Avg Cost", "Price", "Market Value", "Cost Basis",
                         "Unrealized P/L", "Realized P/L", "Total P/L"]:
                 if col in pos_display.columns:
-                    pos_display[col] = pos_display[col].apply(_fmt_cur)
+                    pos_display[col] = pos_display[col].apply(fmt_usd)
             for col in ["Unrealized P/L %"]:
                 if col in pos_display.columns:
                     pos_display[col] = pos_display[col].apply(
@@ -6432,13 +6357,13 @@ def _pp_live_tab(df: pd.DataFrame) -> None:
                     )
             try:
                 styled = pos_display.style.applymap(
-                    _color_signed,
+                    color_signed,
                     subset=[c for c in ["Unrealized P/L", "Realized P/L", "Total P/L",
                                         "Unrealized P/L %"] if c in pos_display.columns]
                 )
             except AttributeError:
                 styled = pos_display.style.map(
-                    _color_signed,
+                    color_signed,
                     subset=[c for c in ["Unrealized P/L", "Realized P/L", "Total P/L",
                                         "Unrealized P/L %"] if c in pos_display.columns]
                 )
