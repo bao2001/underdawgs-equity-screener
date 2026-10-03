@@ -46,6 +46,9 @@ from paper_portfolio_utils import (
     ACTION_BUY, ACTION_SELL, DEFAULT_STARTING_CASH,
     fetch_replay_daily_prices,
 )
+from portfolio_analytics import (
+    sector_exposure, concentration_metrics, weight_drift, risk_metrics, exposure_notes,
+)
 from ui_helpers import (
     market_freshness, fmt_billions, fmt_signed_pct, fmt_usd, color_signed, pill_badge_html,
 )
@@ -805,6 +808,17 @@ def _load_current_model_raw():
 def _load_ticker_universe_cached() -> tuple:
     """Cached ticker universe load (1-hour TTL — refreshed after pipeline runs)."""
     return load_ticker_universe()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_risk_prices_cached(tickers_tuple: tuple) -> pd.DataFrame:
+    """1 year of adjusted daily closes (+ SPY) for portfolio risk analytics. Runs only on a button click."""
+    import yfinance as yf
+    syms = sorted(set(tickers_tuple) | {"SPY"})
+    px = yf.download(syms, period="1y", auto_adjust=True, progress=False, group_by="column")["Close"]
+    if isinstance(px, pd.Series):
+        px = px.to_frame(syms[0])
+    return px.dropna(how="all")
 
 
 @st.cache_data(ttl=3600)
@@ -5889,6 +5903,95 @@ It is a research simulation, not a prediction or investment recommendation.<br>
 """, unsafe_allow_html=True)
 
 
+def _render_portfolio_analytics(pos_df: pd.DataFrame, cash: float) -> None:
+    """Exposure, concentration and (on request) historical risk for the open paper positions."""
+    st.markdown("### Portfolio Analytics")
+    st.caption(
+        "Descriptive statistics about how the simulated portfolio is built. "
+        "They describe makeup and past behaviour; they are not recommendations or predictions."
+    )
+    uni_df, _ = _load_ticker_universe_cached()
+    sector_map = {}
+    if uni_df is not None and not uni_df.empty and "sector" in uni_df.columns:
+        sector_map = {r["ticker"]: r["sector"] for _, r in uni_df.iterrows() if r.get("sector")}
+
+    sec_df = sector_exposure(pos_df, sector_map, cash=cash)
+    conc = concentration_metrics(pos_df)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Open positions", conc["n_positions"])
+    c2.metric("Largest position", f"{conc['top1_pct']:.0f}%", help=f"Share of invested value ({conc['largest_ticker']}).")
+    c3.metric("Top 3 positions", f"{conc['top3_pct']:.0f}%", help="Share of invested value in the three largest positions.")
+    c4.metric("Effective positions", f"{conc['effective_n']:.1f}",
+              help="Equivalent number of equal-sized positions (1 / Herfindahl index). "
+                   "Equal to the position count when all positions are the same size.")
+    for note in exposure_notes(sec_df, conc):
+        st.info(note)
+
+    left, right = st.columns([1, 1], gap="large")
+    with left:
+        st.markdown("**Sector exposure** (% of total portfolio incl. cash)")
+        if not sec_df.empty:
+            fig = go.Figure(go.Bar(
+                x=sec_df["Weight %"], y=sec_df["Sector"], orientation="h",
+                marker_color=["#94a3b8" if s == "Cash" else "#2563eb" for s in sec_df["Sector"]],
+                text=[f"{w:.1f}%" for w in sec_df["Weight %"]], textposition="outside",
+            ))
+            fig.update_layout(height=max(180, 38 * len(sec_df) + 60), margin=dict(l=0, r=30, t=10, b=0),
+                              yaxis=dict(autorange="reversed"), xaxis=dict(title=None, range=[0, max(100, sec_df["Weight %"].max() * 1.15)]),
+                              plot_bgcolor="white")
+            st.plotly_chart(fig, use_container_width=True)
+    with right:
+        st.markdown("**Weights vs equal-weight target** (share of invested value)")
+        drift = weight_drift(pos_df)
+        if not drift.empty:
+            show = drift.copy()
+            for c in ["Current %", "Target %"]:
+                show[c] = show[c].map(lambda v: f"{v:.1f}%")
+            show["Drift (pts)"] = show["Drift (pts)"].map(lambda v: f"{v:+.1f}")
+            show["Value to reach target ($)"] = show["Value to reach target ($)"].map(lambda v: f"{v:+,.0f}")
+            st.dataframe(show, use_container_width=True, hide_index=True)
+            st.caption("Equal weight is an arbitrary reference, not a recommended allocation. "
+                       "The last column is the hypothetical simulated change that would restore it.")
+
+    st.markdown("**Historical risk of current weights**")
+    st.caption("Applies today's weights to the past year of daily returns (Yahoo Finance). "
+               "Backward-looking and approximate; fetched only when you click.")
+    tickers = tuple(sorted(pos_df["Ticker"].tolist()))
+    if st.button("Load risk analytics", key="pp_load_risk"):
+        with st.spinner("Fetching 1 year of prices…"):
+            try:
+                st.session_state["pp_risk_prices"] = _fetch_risk_prices_cached(tickers)
+            except Exception as exc:
+                st.session_state["pp_risk_prices"] = None
+                st.error(f"Could not fetch price history: {exc}")
+    prices = st.session_state.get("pp_risk_prices")
+    if prices is not None and not prices.empty:
+        w = (pos_df.set_index("Ticker")["Market Value"] / pos_df["Market Value"].sum()).to_dict()
+        rm = risk_metrics(prices, w, benchmark="SPY")
+        if rm.get("status") != "ok":
+            st.warning("Not enough price history to compute risk metrics for these positions.")
+        else:
+            r1, r2, r3, r4, r5 = st.columns(5)
+            r1.metric("Volatility (ann.)", f"{rm['ann_vol'] * 100:.1f}%")
+            r2.metric("Beta vs SPY", f"{rm['beta']:.2f}" if pd.notna(rm["beta"]) else "N/A",
+                      help="Sensitivity to S&P 500 moves. 1.0 = moves with the market.")
+            r3.metric("Max drawdown", f"{rm['max_drawdown'] * 100:.1f}%", help="Worst peak-to-trough decline over the period.")
+            r4.metric("Avg. correlation", f"{rm['avg_pairwise_corr']:.2f}" if pd.notna(rm["avg_pairwise_corr"]) else "N/A",
+                      help="Average pairwise correlation between positions. Lower = more diversification.")
+            r5.metric("Diversification ratio", f"{rm['diversification_ratio']:.2f}",
+                      help="Weighted-average stock volatility divided by portfolio volatility. 1.0 = no diversification benefit.")
+            if rm["tickers_missing"]:
+                st.warning("No price history for: " + ", ".join(rm["tickers_missing"]) + " (excluded).")
+            per = rm["per_position"].copy()
+            for c in ["Weight %", "Volatility %"]:
+                per[c] = per[c].map(lambda v: f"{v:.1f}%")
+            if "Beta" in per.columns:
+                per["Beta"] = per["Beta"].map(lambda v: f"{v:.2f}")
+            st.dataframe(per, use_container_width=True, hide_index=True)
+            st.caption(f"Based on {rm['n_days']} trading days of common history. Past behaviour does not predict future results.")
+
+
 def _pp_live_tab(df: pd.DataFrame) -> None:
     """Live Paper Portfolio tab content. No real trades. No real money."""
     # Load portfolio state (non-cached — always current)
@@ -6390,6 +6493,9 @@ def _pp_live_tab(df: pd.DataFrame) -> None:
                 mime="text/csv",
                 key="pp_dl_holdings",
             )
+
+            st.divider()
+            _render_portfolio_analytics(pos_df, float(portfolio.get("current_cash", 0)))
 
     st.divider()
 
