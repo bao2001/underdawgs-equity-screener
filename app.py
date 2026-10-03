@@ -22,7 +22,10 @@ from data_utils import (
     fetch_current_market_data,
     load_ticker_universe,
     expand_universe_for_tickers,
+    CURRENT_MARKET_CSV,
 )
+import market_refresh
+from datetime import datetime
 from ticker_setup_utils import (
     validate_tickers_for_wizard,
     check_ticker_readiness,
@@ -744,8 +747,9 @@ def _load_sample(use_live: bool) -> tuple:
 
 
 @st.cache_data(ttl=300)
-def _load_supplementary() -> tuple:
-    """Load model outputs, current market data, and 10-Q risk update (cached 5 min)."""
+def _load_supplementary(snapshot_mtime: float = 0.0) -> tuple:
+    """Load model outputs and current market data (cached 5 min; snapshot_mtime keys the cache so a
+    newly written market snapshot is picked up immediately)."""
     mo_df, mo_msg = load_model_outputs()
     cm_df, cm_msg = load_current_market_data()
     return mo_df, mo_msg, cm_df, cm_msg
@@ -1160,7 +1164,9 @@ df, data_status = _load_sample(False)
 
 # ── Supplementary data ────────────────────────────────────────────────────────
 
-mo_df, mo_msg, cm_df, cm_msg = _load_supplementary()
+_mkt_mtime = market_refresh.snapshot_mtime(CURRENT_MARKET_CSV)
+st.session_state["_mkt_loaded_mtime"] = _mkt_mtime
+mo_df, mo_msg, cm_df, cm_msg = _load_supplementary(_mkt_mtime)
 
 # ── Styling helpers ───────────────────────────────────────────────────────────
 
@@ -1892,32 +1898,7 @@ def page_screener(df: pd.DataFrame) -> None:
         active_df = add_fundamental_ratios(active_df, "current_market_cap")
     active_df["Sector"] = active_df["Sector"].fillna("Unknown")
 
-    # Auto-refresh stale/missing market snapshot once per browser session
-    _auto_mkt_key = "screener_auto_market_refresh_attempted"
-    _auto_refresh_needed = False
-
-    try:
-        if "last_updated" not in active_df.columns or active_df["last_updated"].dropna().empty:
-            _auto_refresh_needed = True
-        else:
-            _latest_mkt_ts = pd.to_datetime(active_df["last_updated"].dropna(), errors="coerce").max()
-            _auto_age_h = (pd.Timestamp.now() - _latest_mkt_ts).total_seconds() / 3600
-            _auto_refresh_needed = _auto_age_h > 5
-    except Exception:
-        _auto_refresh_needed = True
-
-    if use_xbrl and _auto_refresh_needed and not st.session_state.get(_auto_mkt_key, False):
-        st.session_state[_auto_mkt_key] = True
-        try:
-            _tkrs = active_df["Ticker"].dropna().astype(str).str.upper().unique().tolist()
-            if _tkrs:
-                with st.spinner("Refreshing stale market snapshot …"):
-                    fetch_current_market_data(_tkrs, save=True)
-                _load_supplementary.clear()
-                st.toast("Market snapshot refreshed.")
-                st.rerun()
-        except Exception as _auto_re:
-            st.caption(f"Auto-refresh skipped: {_auto_re}")
+    # Market snapshot auto-refresh runs app-wide in the background (see _market_autorefresh).
 
     # Current signal layer banner (shown when model_outputs_current.csv is loaded)
     if use_xbrl and "current_signal_as_of" in active_df.columns:
@@ -2014,7 +1995,9 @@ def page_screener(df: pd.DataFrame) -> None:
             st.markdown(
                 f'<div style="font-size:12px;color:{_mts_color};margin:32px 0 6px 0">● {_mts_label}</div>'
                 '<div style="font-size:11px;color:#94a3b8">Fundamentals and filing risk update when '
-                'companies file reports. Market price context updates via yfinance snapshot.</div>',
+                'companies file reports. Market prices auto-refresh every '
+                f'{market_refresh.REFRESH_MINUTES} min during US market hours (plus once after the close) '
+                f'via yfinance.{_mkt_refresh_note()}</div>',
                 unsafe_allow_html=True,
             )
         with _fb2:
@@ -6266,7 +6249,7 @@ def _pp_live_tab(df: pd.DataFrame) -> None:
     transactions = load_paper_transactions()
 
     # Load supplementary data for price lookup
-    mo_df, _, cm_df_raw, _ = _load_supplementary()
+    mo_df, _, cm_df_raw, _ = _load_supplementary(market_refresh.snapshot_mtime(CURRENT_MARKET_CSV))
     cm_df = cm_df_raw  # may be None
 
     # ── Account setup / reset ─────────────────────────────────────────────────
@@ -7457,6 +7440,36 @@ def page_about() -> None:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+#  MARKET SNAPSHOT AUTO-REFRESH
+# ════════════════════════════════════════════════════════════════════════════
+
+def _mkt_refresh_note() -> str:
+    stt = market_refresh.status()
+    if stt["running"]:
+        return " Refreshing in the background now…"
+    res = stt.get("last_result") or {}
+    if res and not res.get("ok"):
+        return f" Last auto-refresh did not complete ({res.get('message', 'unknown')}); showing the previous snapshot."
+    return ""
+
+
+@st.fragment(run_every=60)
+def _market_autorefresh() -> None:
+    """Every minute: start a background refresh when one is due; when a new snapshot file has landed,
+    rerun the app so every page shows it. Renders nothing."""
+    try:
+        now = datetime.now(tz=market_refresh.NY)
+        if mo_df is not None and market_refresh.refresh_due(market_refresh.snapshot_time(CURRENT_MARKET_CSV), now):
+            tickers = mo_df["Ticker"].dropna().astype(str).str.upper().unique().tolist()
+            market_refresh.start_background_refresh(
+                tickers, lambda t: fetch_current_market_data(t, save=False), CURRENT_MARKET_CSV)
+        if market_refresh.snapshot_mtime(CURRENT_MARKET_CSV) != st.session_state.get("_mkt_loaded_mtime"):
+            st.rerun()
+    except Exception:
+        pass   # never let the refresh timer break a page
+
+
+# ════════════════════════════════════════════════════════════════════════════
 #  ROUTER
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -7470,3 +7483,5 @@ elif page == "Portfolio Simulator":
     page_portfolio_simulator(df)
 elif page == "About":
     page_about()
+
+_market_autorefresh()
