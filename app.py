@@ -3119,8 +3119,8 @@ def _xbrl_company_detail(mo: pd.DataFrame) -> None:
     st.markdown('<div class="ud-section-tight"></div>', unsafe_allow_html=True)
 
     # Tabs
-    tab_ov, tab_val, tab_risk, tab_profile, tab_notes = st.tabs(
-        ["Overview", "Valuation", "Filing Risk", "Financial Profile", "Research Notes"]
+    tab_ov, tab_val, tab_risk, tab_profile, tab_peers, tab_notes = st.tabs(
+        ["Overview", "Valuation", "Filing Risk", "Financial Profile", "Peers", "Research Notes"]
     )
 
     # ── Overview ──────────────────────────────────────────────────────────────
@@ -3390,8 +3390,105 @@ def _xbrl_company_detail(mo: pd.DataFrame) -> None:
         )
 
     # ── Research Notes ────────────────────────────────────────────────────────
+    with tab_peers:
+        _render_peers_tab(mo, chosen)
+
     with tab_notes:
         _render_research_notes_tab(chosen)
+
+
+_PEER_METRICS = ["PE_Ratio", "PS_Ratio", "PB_Ratio", "Revenue_Growth_Pct", "Op_Margin_Pct", "ROE_Pct", "Debt_Equity"]
+# higher-is-better orientation is deliberately NOT shown: a low P/E or high debt is context, not a verdict
+
+
+def _peer_universe(mo: pd.DataFrame) -> pd.DataFrame:
+    """Model outputs + freshest market cap + ratios, one row per ticker."""
+    pdf = mo.copy()
+    if cm_df is not None and len(cm_df) > 0 and "current_market_cap" in cm_df.columns:
+        fresh = cm_df[["ticker", "current_market_cap"]].rename(columns={"ticker": "Ticker", "current_market_cap": "_mc_fresh"})
+        fresh["Ticker"] = fresh["Ticker"].str.upper()
+        pdf = pdf.merge(fresh, on="Ticker", how="left")
+        base = pdf["current_market_cap"] if "current_market_cap" in pdf.columns else np.nan
+        pdf["current_market_cap"] = pdf["_mc_fresh"].fillna(base)
+        pdf = pdf.drop(columns="_mc_fresh")
+    pdf = add_fundamental_ratios(pdf, "current_market_cap")
+    pdf["Sector"] = pdf["Sector"].fillna("Unknown")
+    return pdf
+
+
+def _render_peers_tab(mo: pd.DataFrame, chosen: str) -> None:
+    pdf = _peer_universe(mo)
+    row = pdf[pdf["Ticker"] == chosen]
+    if row.empty:
+        st.info("No data for this company.")
+        return
+    sector = row["Sector"].iloc[0]
+    if sector in ("Unknown", "", None):
+        st.info("Sector is unknown for this company, so no peer group is available.")
+        return
+    group = pdf[pdf["Sector"] == sector]
+    st.markdown(f"#### {sector} peers")
+    st.caption(f"{len(group)} {sector} companies in the Underdawg universe. Ratios use TTM fundamentals from SEC filings "
+               "and the latest market snapshot. Percentile = position within this sector (0 = lowest value, 100 = highest); "
+               "it describes, it does not judge — a low P/E or a high margin is context for research, not a verdict.")
+    if len(group) < 3:
+        st.warning("Fewer than three companies in this sector — comparisons are not very informative.")
+
+    pt = peer_table(pdf, chosen, _PEER_METRICS, size_col="current_market_cap", max_peers=12)
+    med = sector_medians(pdf, sector, _PEER_METRICS)
+    me = pt.iloc[0]
+    comp = pd.DataFrame([{
+        "Metric": RATIO_COLUMNS[m][0],
+        chosen: fmt_ratio(me.get(m), RATIO_COLUMNS[m][1]),
+        "Sector median": fmt_ratio(med.get(m), RATIO_COLUMNS[m][1]),
+        "Percentile in sector": f"{me.get(m + '_pctile'):.0f}" if pd.notna(me.get(m + "_pctile")) else "—",
+    } for m in _PEER_METRICS])
+    st.dataframe(comp, use_container_width=True, hide_index=True)
+
+    st.markdown("**Largest peers**")
+    show = pd.DataFrame({
+        "Ticker": pt["Ticker"],
+        "Company": pt.get("Company_Name", ""),
+        "Market Cap": pt["current_market_cap"].map(lambda v: f"${v / 1e9:,.0f}B" if pd.notna(v) and v > 0 else "—"),
+        **{RATIO_COLUMNS[m][0]: pt[m].map(lambda v, k=RATIO_COLUMNS[m][1]: fmt_ratio(v, k)) for m in _PEER_METRICS},
+        "Quality": pt["Quality_Score"].map(lambda v: f"{v:.0f}" if pd.notna(v) else "—"),
+        "Signal": pt.get("final_signal_display", pt.get("Final_Signal")),
+    })
+    try:
+        styled = show.style.apply(lambda r: ["background-color:#eff6ff;font-weight:600" if r["Ticker"] == chosen else "" for _ in r], axis=1)
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+    except Exception:
+        st.dataframe(show, use_container_width=True, hide_index=True)
+    st.caption("Ratios are blank (—) when the denominator is zero or negative, e.g. P/E for a loss-making company.")
+
+    st.markdown("**Price performance vs peers (past year)**")
+    st.caption("Indexed to 100 one year ago. Fetched from Yahoo Finance only when you click. Past performance does not predict future results.")
+    compare = [chosen] + [t for t in pt["Ticker"].tolist() if t != chosen][:5]
+    if st.button("Load price comparison", key=f"peer_px_{chosen}"):
+        with st.spinner("Fetching prices…"):
+            try:
+                st.session_state["peer_px"] = (chosen, _fetch_risk_prices_cached(tuple(sorted(compare))))
+            except Exception as exc:
+                st.session_state["peer_px"] = None
+                st.error(f"Could not fetch prices: {exc}")
+    cached = st.session_state.get("peer_px")
+    if cached and cached[0] == chosen and cached[1] is not None and not cached[1].empty:
+        px = cached[1]
+        fig = go.Figure()
+        for t in compare + ["SPY"]:
+            if t not in px.columns or px[t].dropna().empty:
+                continue
+            s = px[t].dropna()
+            fig.add_trace(go.Scatter(
+                x=s.index, y=s / s.iloc[0] * 100, name=t, mode="lines",
+                line=dict(width=3 if t == chosen else 1.4,
+                          dash="dot" if t == "SPY" else "solid",
+                          color="#2563eb" if t == chosen else ("#0f172a" if t == "SPY" else None)),
+                opacity=1.0 if t in (chosen, "SPY") else 0.65,
+            ))
+        fig.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="white",
+                          yaxis_title="Indexed (100 = start)", legend=dict(orientation="h", y=-0.15))
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def _sample_company_detail(df: pd.DataFrame) -> None:
