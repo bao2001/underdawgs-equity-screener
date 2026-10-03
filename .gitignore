@@ -30,3 +30,4 @@ sec_filing_10q_cache/
 quant/prices_daily.csv
 quant/sec_facts_cache/
 experiments_out/
+quant/factors_monthly.csv

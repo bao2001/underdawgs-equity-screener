@@ -103,13 +103,20 @@ def build():
     tickers = [c for c in px.columns if c != "SPY"]
     cik = pd.read_csv(os.path.join(ROOT, "ticker_cik_mapping.csv")).set_index("ticker")["cik"]
     sector = pd.read_csv(os.path.join(ROOT, "ticker_universe.csv")).drop_duplicates("ticker").set_index("ticker")["sector"]
+    extra_path = os.path.join(HERE, "universe_extra.csv")
+    if os.path.exists(extra_path):                       # S&P 500 names downloaded by download_universe.py
+        ex = pd.read_csv(extra_path).set_index("ticker")
+        cik = pd.concat([cik, ex["cik"]]); sector = pd.concat([sector, ex["sector"]])
     me = px.resample("ME").last().index
     me = me[me >= pd.Timestamp(START)]
     rows = []
     for tk in tickers:
         if tk not in cik.index: continue
         facts = B._load_facts(int(cik[tk]))
-        if facts is None: continue
+        if facts is None:                                # fall back to the quant-only cache
+            fp = os.path.join(HERE, "sec_facts_cache", f"CIK{int(cik[tk]):010d}.json")
+            if not os.path.exists(fp): continue
+            with open(fp, encoding="utf-8") as fh: facts = __import__("json").load(fh)
         S = {k: _chain_series(facts, c, "dur") for k, c in dict(
             rev=B._REVENUE_CONCEPTS, ni=B._NET_INCOME_CONCEPTS, oi=B._OP_INCOME_CONCEPTS, gp=B._GROSS_PROFIT_CONCEPTS).items()}
         I = {k: _chain_series(facts, c, "inst") for k, c in dict(
@@ -158,5 +165,6 @@ if __name__ == "__main__":
     # sanity: our price x shares market cap vs the app's current market cap
     last = df[df.date == df.date.max()].set_index("ticker").mktcap
     cur = pd.read_csv(os.path.join(ROOT, "model_outputs_current.csv")).set_index("ticker").current_market_cap
+    last = last[last.index.isin(cur.index)]
     r = (last / cur).dropna()
     print(f"market-cap sanity (ours/yfinance) median={r.median():.2f}, within 20%: {((r>0.8)&(r<1.2)).mean():.0%} of {len(r)}")
