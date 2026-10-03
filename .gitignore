@@ -25,3 +25,8 @@ research_notes.csv
 # Local generated folders
 backups/
 sec_filing_10q_cache/
+
+# quant research caches (regenerable)
+quant/prices_daily.csv
+quant/sec_facts_cache/
+experiments_out/
