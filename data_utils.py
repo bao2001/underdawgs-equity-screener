@@ -76,6 +76,16 @@ def get_screener_data(use_live: bool = False) -> tuple:
 
 # ── XBRL model outputs ────────────────────────────────────────────────────────
 
+def _sector_lookup(tickers) -> list:
+    """Sector per ticker from ticker_universe.csv; 'Unknown' when unavailable."""
+    try:
+        uni = pd.read_csv(TICKER_UNIVERSE_CSV, dtype=str).fillna("")
+        m = {t.upper(): s for t, s in zip(uni["ticker"], uni["sector"]) if s}
+    except Exception:
+        m = {}
+    return [m.get(str(t).upper(), "Unknown") for t in tickers]
+
+
 def load_model_outputs() -> tuple:
     """
     Load the best available model output file, one row per ticker (most recent year).
@@ -127,7 +137,7 @@ def load_model_outputs() -> tuple:
         df = pd.DataFrame({
             "Ticker":               raw["ticker"].values,
             "Company_Name":         _col("company_name"),
-            "Sector":               "Technology",    # placeholder; XBRL lacks sector data
+            "Sector":               _sector_lookup(raw["ticker"].values),
             "year":                 raw["year"].values,
             "Market_Cap_B":         raw["actual_market_cap"].values   / 1e9,
             "Estimated_Fair_Value": raw["estimated_fair_value"].values / 1e9,
@@ -181,6 +191,12 @@ def load_model_outputs() -> tuple:
         for _ec in _extra_passthrough:
             if _ec in raw.columns:
                 df[_ec] = raw[_ec].values
+
+        # Raw SEC fundamentals (current signal layer) for ratio-based discovery filters
+        for _fc in ["revenue", "net_income", "operating_income", "gross_profit", "assets",
+                    "liabilities", "equity", "cash", "debt", "revenue_growth"]:
+            if _fc in raw.columns:
+                df[_fc] = raw[_fc].values
 
         # Per-share / filing metrics unavailable from XBRL market-cap model
         for col in [

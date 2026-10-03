@@ -31,3 +31,4 @@ quant/prices_daily.csv
 quant/sec_facts_cache/
 experiments_out/
 quant/factors_monthly.csv
+saved_screens.json

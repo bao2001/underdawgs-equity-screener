@@ -46,6 +46,10 @@ from paper_portfolio_utils import (
     ACTION_BUY, ACTION_SELL, DEFAULT_STARTING_CASH,
     fetch_replay_daily_prices,
 )
+from discovery_utils import (
+    add_fundamental_ratios, range_filter, fmt_ratio, RATIO_COLUMNS,
+    load_saved_screens, save_screen, delete_screen, sanitize_multiselect, peer_table, sector_medians,
+)
 from portfolio_analytics import (
     sector_exposure, concentration_metrics, weight_drift, risk_metrics, exposure_notes,
 )
@@ -1694,6 +1698,109 @@ def page_home() -> None:
 #  PAGE 2 -- SCREENER
 # ════════════════════════════════════════════════════════════════════════════
 
+# ── Screener filter state + saved screens ────────────────────────────────────
+
+_SCREEN_KEYS = [
+    "flt_search", "flt_sig", "flt_sec", "flt_q", "flt_rsk", "flt_sort", "flt_uni_group",
+    "flt_freshness", "flt_trend", "flt_mc_min", "flt_mc_max", "flt_pe_max", "flt_ps_max",
+    "flt_rg_min", "flt_om_min", "flt_roe_min", "flt_de_max", "flt_show_fund",
+]
+
+
+def _dflt(key: str, value):
+    """Widget default that defers to an existing session-state value (avoids Streamlit's
+    'default value + Session State' conflict when a saved screen is loaded)."""
+    return None if key in st.session_state else value
+
+
+def _sync_multiselect_state(key: str, options: list) -> None:
+    st.session_state["_opts_" + key] = list(options)       # remembered so saves can skip "all selected"
+    if key in st.session_state:
+        clean = sanitize_multiselect(st.session_state[key], options)
+        if clean is None:
+            del st.session_state[key]
+        else:
+            st.session_state[key] = clean
+
+
+def _clamp_state(key: str, lo, hi) -> None:
+    if key in st.session_state:
+        try:
+            st.session_state[key] = min(max(type(lo)(st.session_state[key]), lo), hi)
+        except Exception:
+            del st.session_state[key]
+
+
+def _apply_saved_screen() -> None:
+    name = st.session_state.get("scr_saved_pick")
+    cfg = load_saved_screens().get(name) if name else None
+    if not cfg:
+        return
+    for k in _SCREEN_KEYS:
+        if k in cfg:
+            st.session_state[k] = cfg[k]
+        elif k in st.session_state:
+            del st.session_state[k]          # unspecified -> back to default
+    st.session_state["_scr_flash"] = f"Loaded screen “{name}”."
+
+
+def _save_current_screen() -> None:
+    name = (st.session_state.get("scr_save_name") or "").strip()
+    if not name:
+        st.session_state["_scr_flash"] = "Enter a name to save this screen."
+        return
+    cfg = {}
+    for k in _SCREEN_KEYS:
+        if k not in st.session_state:
+            continue
+        opts = st.session_state.get("_opts_" + k)
+        if opts is not None and set(st.session_state[k]) == set(opts):
+            continue                       # "everything selected" = default; stays open to new options
+        cfg[k] = st.session_state[k]
+    save_screen(name, cfg)
+    st.session_state["_scr_flash"] = f"Saved screen “{name}”."
+    st.session_state["scr_save_name"] = ""
+
+
+def _delete_saved_screen() -> None:
+    name = st.session_state.get("scr_saved_pick")
+    if name:
+        delete_screen(name)
+        st.session_state["_scr_flash"] = f"Deleted screen “{name}”."
+
+
+def _reset_screen() -> None:
+    for k in _SCREEN_KEYS:
+        st.session_state.pop(k, None)
+    st.session_state["_scr_flash"] = "Filters reset."
+
+
+def _render_saved_screens_bar() -> None:
+    screens = load_saved_screens()
+    b1, b2, b3, b4, b5, b6 = st.columns([2.2, 0.8, 0.8, 2.2, 0.8, 0.9])
+    with b1:
+        st.selectbox("Saved screens", options=sorted(screens) or ["(none saved)"], key="scr_saved_pick",
+                     disabled=not screens)
+    with b2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.button("Load", key="scr_load", on_click=_apply_saved_screen, disabled=not screens, use_container_width=True)
+    with b3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.button("Delete", key="scr_delete", on_click=_delete_saved_screen, disabled=not screens, use_container_width=True)
+    with b4:
+        st.text_input("Save current filters as", key="scr_save_name", placeholder="e.g. Profitable growth")
+    with b5:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.button("Save", key="scr_save", on_click=_save_current_screen, use_container_width=True)
+    with b6:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.button("Reset", key="scr_reset", on_click=_reset_screen, use_container_width=True)
+    flash = st.session_state.pop("_scr_flash", None)
+    if flash:
+        st.caption(flash)
+    st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
+
+
 def page_screener(df: pd.DataFrame) -> None:
     st.markdown('<div class="ud-page-start"></div>', unsafe_allow_html=True)
     st.title("Research Screener")
@@ -1779,6 +1886,11 @@ def page_screener(df: pd.DataFrame) -> None:
         )
     else:
         active_df["market_freshness"] = "missing"
+
+    # Valuation / fundamental ratios from SEC fundamentals + live market cap (discovery filters)
+    if use_xbrl:
+        active_df = add_fundamental_ratios(active_df, "current_market_cap")
+    active_df["Sector"] = active_df["Sector"].fillna("Unknown")
 
     # Auto-refresh stale/missing market snapshot once per browser session
     _auto_mkt_key = "screener_auto_market_refresh_attempted"
@@ -2007,6 +2119,7 @@ def page_screener(df: pd.DataFrame) -> None:
 
     # Filter panel — collapsed by default
     with st.expander("Filters and sorting", expanded=False):
+        _render_saved_screens_bar()
         fp1, fp2, fp3 = st.columns(3)
         with fp1:
             ticker_search = st.text_input("Search ticker / company", value="", key="flt_search", placeholder="e.g. AAPL")
@@ -2014,30 +2127,35 @@ def page_screener(df: pd.DataFrame) -> None:
             sig_opts = list(SIGNAL_ORDER)
             if use_xbrl and not hide_flagged:
                 sig_opts = sig_opts + ["Needs review"]
-            sel_sigs = st.multiselect("Signal", sig_opts, default=sig_opts, key="flt_sig")
+            _sync_multiselect_state("flt_sig", sig_opts)
+            sel_sigs = st.multiselect("Signal", sig_opts, default=_dflt("flt_sig", sig_opts), key="flt_sig")
         with fp3:
             sectors = sorted(active_df["Sector"].dropna().unique())
-            sel_sec = st.multiselect("Sector", sectors, default=sectors, key="flt_sec")
+            _sync_multiselect_state("flt_sec", sectors)
+            sel_sec = st.multiselect("Sector", sectors, default=_dflt("flt_sec", sectors), key="flt_sec")
 
         fp4, fp5, fp6 = st.columns(3)
         with fp4:
             q_vals = active_df["Quality_Score"].dropna()
             min_q  = int(q_vals.min()) if len(q_vals) > 0 else 0
             max_q  = int(q_vals.max()) if len(q_vals) > 0 else 100
-            q_range = st.slider("Min quality score", min_q, max_q, min_q, key="flt_q")
+            _clamp_state("flt_q", min_q, max_q)
+            q_range = st.slider("Min quality score", min_q, max_q, _dflt("flt_q", min_q), key="flt_q")
         with fp5:
             _risk_col = ("report_risk_score_real"
                          if "report_risk_score_real" in active_df.columns
                          and active_df["report_risk_score_real"].notna().any()
                          else "Report_Risk_Score")
             if _risk_col in active_df.columns:
-                rsk_max_filter = st.slider("Max filing risk score", 0, 100, 100, key="flt_rsk")
+                _clamp_state("flt_rsk", 0, 100)
+                rsk_max_filter = st.slider("Max filing risk score", 0, 100, _dflt("flt_rsk", 100), key="flt_rsk")
             else:
                 rsk_max_filter = 100
         with fp6:
             sort_by = st.selectbox(
                 "Sort by",
-                ["Research priority", "Valuation gap", "Current gap", "Quality score", "Filing risk", "10-Q Risk", "Market cap", "Year"],
+                ["Research priority", "Valuation gap", "Current gap", "Quality score", "Filing risk", "10-Q Risk", "Market cap", "Year",
+                 "P/E (low to high)", "Revenue growth", "Operating margin", "ROE"],
                 key="flt_sort",
             )
 
@@ -2050,10 +2168,11 @@ def page_screener(df: pd.DataFrame) -> None:
         if len(_uni_groups_avail) > 1:
             _ug1, _ug2, _ = st.columns(3)
             with _ug1:
+                _sync_multiselect_state("flt_uni_group", _uni_groups_avail)
                 sel_uni_groups = st.multiselect(
                     "Universe group",
                     _uni_groups_avail,
-                    default=_uni_groups_avail,
+                    default=_dflt("flt_uni_group", _uni_groups_avail),
                     key="flt_uni_group",
                     help="Filter by universe group (current_demo, expanded_100, custom).",
                 )
@@ -2067,10 +2186,11 @@ def page_screener(df: pd.DataFrame) -> None:
             if _has_freshness_col:
                 with fp7:
                     _fresh_opts = sorted(active_df["market_freshness"].dropna().unique().tolist())
+                    _sync_multiselect_state("flt_freshness", _fresh_opts)
                     sel_freshness = st.multiselect(
                         "Market data freshness",
                         _fresh_opts,
-                        default=_fresh_opts,
+                        default=_dflt("flt_freshness", _fresh_opts),
                         key="flt_freshness",
                         help="Filter by how recent the live market data is.",
                     )
@@ -2078,13 +2198,36 @@ def page_screener(df: pd.DataFrame) -> None:
                 with fp8:
                     _trend_opts = ["Increasing", "Stable", "Decreasing", "Unavailable"]
                     _trend_avail = [t for t in _trend_opts if t in active_df["filing_risk_trend"].values or t == "Unavailable"]
+                    _sync_multiselect_state("flt_trend", _trend_avail)
                     sel_trend = st.multiselect(
                         "Filing risk trend",
                         _trend_avail,
-                        default=_trend_avail,
+                        default=_dflt("flt_trend", _trend_avail),
                         key="flt_trend",
                         help="Filter by 10-Q vs 10-K risk trend direction.",
                     )
+
+        # Fundamentals (blank = no filter; companies missing a value are only excluded when that filter is set)
+        fund = {}
+        if use_xbrl:
+            st.markdown("**Fundamentals** — leave blank for no filter")
+            fr1, fr2, fr3, fr4 = st.columns(4)
+            with fr1:
+                fund["mc_min"] = st.number_input("Min market cap ($B)", min_value=0.0, value=None, step=10.0, placeholder="Any", key="flt_mc_min")
+                fund["mc_max"] = st.number_input("Max market cap ($B)", min_value=0.0, value=None, step=10.0, placeholder="Any", key="flt_mc_max")
+            with fr2:
+                fund["pe_max"] = st.number_input("Max P/E", min_value=0.0, value=None, step=5.0, placeholder="Any",
+                                                 key="flt_pe_max", help="Loss-making companies have no P/E and are excluded when this is set.")
+                fund["ps_max"] = st.number_input("Max P/S", min_value=0.0, value=None, step=1.0, placeholder="Any", key="flt_ps_max")
+            with fr3:
+                fund["rg_min"] = st.number_input("Min revenue growth (%)", value=None, step=5.0, placeholder="Any", key="flt_rg_min")
+                fund["om_min"] = st.number_input("Min operating margin (%)", value=None, step=5.0, placeholder="Any", key="flt_om_min")
+            with fr4:
+                fund["roe_min"] = st.number_input("Min ROE (%)", value=None, step=5.0, placeholder="Any", key="flt_roe_min")
+                fund["de_max"] = st.number_input("Max debt / equity", min_value=0.0, value=None, step=0.5, placeholder="Any", key="flt_de_max")
+            show_fund_cols = st.toggle("Show fundamentals columns in the table", value=False, key="flt_show_fund")
+        else:
+            show_fund_cols = False
 
     # Apply filters
     fdf = active_df[
@@ -2116,6 +2259,17 @@ def page_screener(df: pd.DataFrame) -> None:
             _trend_mask = _trend_mask | fdf["filing_risk_trend"].isna()
         fdf = fdf[_trend_mask].copy()
 
+    if use_xbrl and fund:
+        _mc_b = fdf.get("current_market_cap", pd.Series(np.nan, index=fdf.index)) / 1e9
+        fdf = fdf.assign(_mc_b=_mc_b)
+        fdf = range_filter(fdf, "_mc_b", fund["mc_min"], fund["mc_max"]).drop(columns="_mc_b")
+        fdf = range_filter(fdf, "PE_Ratio", None, fund["pe_max"])
+        fdf = range_filter(fdf, "PS_Ratio", None, fund["ps_max"])
+        fdf = range_filter(fdf, "Revenue_Growth_Pct", fund["rg_min"], None)
+        fdf = range_filter(fdf, "Op_Margin_Pct", fund["om_min"], None)
+        fdf = range_filter(fdf, "ROE_Pct", fund["roe_min"], None)
+        fdf = range_filter(fdf, "Debt_Equity", None, fund["de_max"]).copy()
+
     # Sort
     if sort_by == "Research priority":
         fdf["_pri"] = fdf["Final_Signal"].map({s: i for i, s in enumerate(SIGNAL_ORDER)})
@@ -2140,6 +2294,14 @@ def page_screener(df: pd.DataFrame) -> None:
         fdf = fdf.sort_values("Market_Cap_B", ascending=False)
     elif sort_by == "Year":
         fdf = fdf.sort_values("year", ascending=False)
+    elif sort_by == "P/E (low to high)" and "PE_Ratio" in fdf.columns:
+        fdf = fdf.sort_values("PE_Ratio", ascending=True, na_position="last")
+    elif sort_by == "Revenue growth" and "Revenue_Growth_Pct" in fdf.columns:
+        fdf = fdf.sort_values("Revenue_Growth_Pct", ascending=False, na_position="last")
+    elif sort_by == "Operating margin" and "Op_Margin_Pct" in fdf.columns:
+        fdf = fdf.sort_values("Op_Margin_Pct", ascending=False, na_position="last")
+    elif sort_by == "ROE" and "ROE_Pct" in fdf.columns:
+        fdf = fdf.sort_values("ROE_Pct", ascending=False, na_position="last")
     fdf = fdf.reset_index(drop=True)
     
     st.markdown('<div style="height:36px"></div>', unsafe_allow_html=True)
@@ -2179,6 +2341,9 @@ def page_screener(df: pd.DataFrame) -> None:
             desired.append("output_quality_flag")
         if "current_price" in fdf.columns:
             desired += ["current_price", "daily_change_pct"]
+        if show_fund_cols:
+            desired.insert(desired.index("Company_Name") + 1, "Sector")
+            desired += [c for c in RATIO_COLUMNS if c in fdf.columns]
         col_rename = {
             "Ticker": "Ticker", "Company_Name": "Company", "year": "Model Yr",
             "Market_Cap_B": "Model MC (B)", "current_market_cap": "Live MC (B)",
@@ -2190,6 +2355,8 @@ def page_screener(df: pd.DataFrame) -> None:
             "report_risk_score_real": "Filing Risk", "Report_Risk_Score": "Filing Risk",
             "latest_10q_risk_score": "10-Q Risk", "filing_risk_trend": "Risk Trend",
             "current_price": "Live Price", "daily_change_pct": "Daily Chg %",
+            "Sector": "Sector",
+            **{c: lbl for c, (lbl, _) in RATIO_COLUMNS.items()},
         }
     else:
         desired = ["Ticker", "Company_Name", "Sector", "Current_Price", "Estimated_Fair_Value",
@@ -2214,6 +2381,9 @@ def page_screener(df: pd.DataFrame) -> None:
     if "Market Price ($)"    in display.columns: display["Market Price ($)"]    = display["Market Price ($)"].map("${:.2f}".format)
     if "Est. Fair Value ($)" in display.columns: display["Est. Fair Value ($)"] = display["Est. Fair Value ($)"].map("${:.2f}".format)
     if "Valuation Gap (%)"   in display.columns: display["Valuation Gap (%)"]   = display["Valuation Gap (%)"].map(fmt_signed_pct)
+    for _rc, (_rl, _rk) in RATIO_COLUMNS.items():
+        if use_xbrl and _rl in display.columns:
+            display[_rl] = display[_rl].map(lambda v, k=_rk: fmt_ratio(v, k))
 
     def _gap_label(v):
         try: v = float(v)
