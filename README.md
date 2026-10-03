@@ -132,7 +132,26 @@ XBRL shares-outstanding data is also normalised: some companies switch between
 reporting individual shares and thousands; the pipeline detects and corrects this
 using a median-based outlier check.
 
-### Model performance (28-observation test set)
+### Model performance
+
+> **Update (Oct 2026):** the table below is the original 2010–2016 legacy-only result
+> (28-observation random holdout) and is **optimistic**. After expanding to ~1,045
+> company-years (2010–2024) and validating more strictly, results are:
+
+| Validation | Best model | R² |
+|---|---|---|
+| Random 80/20 row split (optimistic) | Random Forest | ~0.76 |
+| Unseen companies (company-level) | Ridge | ~0.58 |
+| Train 2010–2020 → test 2021–2024 | Random Forest | ~0.47 |
+| Train 2010–2016 → test 2017–2024 | Random Forest | ~−0.17 |
+
+Typical error is roughly 50–90% in dollar market cap. An out-of-sample check
+(`experiments/valuation_gap_predictiveness.py`) found no reliable relationship between the valuation gap and the
+following year's market-cap change (average yearly rank correlation ≈ 0.0). The
+valuation gap is research context, not a forecast. Reproduce with
+`python3 validate_combined_model.py`.
+
+Original legacy-only result (kept for reference):
 
 | Model | MAE | RMSE | R² |
 |---|---|---|---|
@@ -141,8 +160,7 @@ using a median-based outlier check.
 | Mean baseline | ~1.12 log units | ~1.25 | ~−0.02 |
 
 MAE in log units: an MAE of 0.38 means predictions are off by roughly 38% in
-log-market-cap space (~46% in dollar terms). Both models substantially beat the
-mean baseline.
+log-market-cap space (~46% in dollar terms) on that split.
 
 ### Fallback behaviour
 

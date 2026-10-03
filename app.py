@@ -3469,20 +3469,28 @@ research without replacing that research:
     sc1, sc2 = st.columns(2, gap="large")
 
     with sc1:
-        st.markdown("##### Underdawg Valuation Model (2010–2026)")
+        st.markdown("##### Underdawg Valuation Model (2010–2024)")
         st.markdown("""
-A Ridge Regression model trained on 361 company-year observations (29 companies,
-2010–2026, legacy XBRL + modern SEC). The model predicts **log(market_cap)** from 16
-financial features.
+A model trained on ~1,045 company-year observations (~120 companies, 2010–2024;
+legacy XBRL + modern SEC filings). It predicts **log(market_cap)** from 16 financial
+features. Random Forest is currently the best-scoring model; Ridge Regression is
+kept as a comparison.
 
-Legacy-era best model: **Ridge Regression**
-(RMSE = 0.549, R² = 0.80 on 28-observation legacy holdout)
+**How well does it work? (honest validation, `validate_combined_model.py`)**
+- Random 80/20 row split: R² ≈ 0.76 — *optimistic, the same company appears in train and test*
+- Unseen companies: R² ≈ 0.58
+- Trained on 2010–2020, tested on 2021–2024: R² ≈ 0.47
+- Trained on 2010–2016, tested on 2017–2024: R² ≈ −0.17 (does not generalize across eras)
 
-**Key drivers (Random Forest importances):**
-1. log(Revenue) — 49.5%
-2. Gross Margin — 15.0%
-3. Equity — 6.9%
-4. Gross Profit — 6.3%
+A typical estimate can be off by roughly 50–90% in dollar market cap. Much of the
+fit comes from company size (revenue), so the model explains *what a company's
+market value is* better than whether it is mispriced.
+
+**Predictive power:** an internal out-of-sample check found no reliable relationship
+between the valuation gap and the next year's change in market cap (average yearly
+rank correlation ≈ 0.0). The gap is context for research, not a forecast.
+
+**Key drivers:** see the feature importances on the Model Diagnostics page.
 
 Estimated fair value = exp(predicted log(MC)), shown in billions.
         """)
@@ -4252,14 +4260,14 @@ def page_model_diagnostics() -> None:
         st.markdown("""
 | Limitation | Detail |
 |---|---|
-| **Training set** | 361 company-year rows, 29 companies, 2010–2026. Legacy era validated; cross-era generalization is weak (see Combined Model Validation below). |
+| **Training set** | ~1,045 company-year rows, ~120 companies, 2010–2024. Cross-era generalization is weak (see Combined Model Validation below). |
 | **Tech-sector concentration** | Training universe is predominantly technology companies. May not generalize to other sectors. |
 | **In-sample predictions** | model_outputs.csv uses the 80%-trained model applied to all 137 rows. 80% carry in-sample bias. |
 | **Row-based train/test split** | The current 80/20 split is row-based, so the same company can appear in both train and test sets across different years. This makes test metrics optimistic. A company-level or time-based split (e.g., train on 2010–2014, test on 2015–2016) should be used next to get unbiased estimates. |
 | **Market cap approximation** | Historical MC = split-adjusted price × XBRL shares. Not the same as official float-adjusted market cap. |
 | **Report risk placeholder** | Report Risk Score = 50 for all XBRL companies. Signal is driven by valuation gap and quality only. |
 | **Suspicious data rows** | ADSK 2011 and other rows with extreme gaps are flagged as 'needs_review' due to likely XBRL shares units errors. These rows should not be used as research candidates. |
-| **No post-2016 validation** | Model cannot predict current valuations. Current market data is for context only. |
+| **Limited predictive evidence** | Combined validation covers 2010–2024, but R² falls to ~0.47 on recent held-out years and below 0 across eras. An internal check found no reliable link between the valuation gap and next-year market-cap change. Treat gaps as context, not forecasts. |
 | **Not investment advice** | The valuation gap is a research signal, not proof of undervaluation. |
         """)
     else:
