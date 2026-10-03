@@ -1,6 +1,6 @@
 ticker,company_name,cik,source,mapping_quality_flag
 MSFT,Microsoft Corp,789019,ticker_mapping_csv,ok
-GOOGL,Google Inc.,1288776,ticker_mapping_csv,ok
+GOOGL,Alphabet Inc.,1652044,sec_company_tickers_verified,ok
 AMZN,Amazon COM Inc,1018724,ticker_mapping_csv,ok
 META,Facebook Inc,1326801,ticker_mapping_csv,ok
 NVDA,Nvidia Corp,1045810,ticker_mapping_csv,ok
@@ -14,7 +14,7 @@ CRM,Salesforce COM Inc,1108524,ticker_mapping_csv,ok
 GRMN,Garmin LTD,1121788,ticker_mapping_csv,ok
 LOGI,Logitech International SA,1032975,ticker_mapping_csv,ok
 HPQ,HP Inc,47217,ticker_mapping_csv,ok
-SNDK,Sandisk Corp,1000180,ticker_mapping_csv,ok
+SNDK,Sandisk Corp,2023554,sec_company_tickers_verified,ok
 INTC,Intel Corp,50863,ticker_mapping_csv,ok
 CSCO,Cisco Systems Inc,858877,ticker_mapping_csv,ok
 MU,Micron Technology Inc,723125,ticker_mapping_csv,ok
@@ -39,9 +39,9 @@ AMD,Advanced Micro Devices,2488,expanded_ticker_seed,ok
 AVGO,Broadcom Inc,1730168,expanded_ticker_seed,ok
 KLAC,KLA Corp,319201,expanded_ticker_seed,ok
 MCHP,Microchip Technology Inc,827054,expanded_ticker_seed,ok
-ON,ON Semiconductor Corp,863894,expanded_ticker_seed,ok
+ON,ON Semiconductor Corp,1097864,sec_company_tickers_verified,ok
 SWKS,Skyworks Solutions Inc,4127,expanded_ticker_seed,ok
-MRVL,Marvell Technology Inc,1058057,expanded_ticker_seed,ok
+MRVL,Marvell Technology Inc,1835632,sec_company_tickers_verified,ok
 NOW,ServiceNow Inc,1373715,expanded_ticker_seed,ok
 PANW,Palo Alto Networks Inc,1327567,expanded_ticker_seed,ok
 FTNT,Fortinet Inc,1262039,expanded_ticker_seed,ok
@@ -50,13 +50,13 @@ CDNS,Cadence Design Systems Inc,813672,expanded_ticker_seed,ok
 SNPS,Synopsys Inc,883241,expanded_ticker_seed,ok
 CTSH,Cognizant Technology Solutions,1058290,expanded_ticker_seed,ok
 OKTA,Okta Inc,1660134,expanded_ticker_seed,ok
-DDOG,Datadog Inc,1707753,expanded_ticker_seed,ok
+DDOG,Datadog Inc,1561550,sec_company_tickers_verified,ok
 ZS,Zscaler Inc,1713683,expanded_ticker_seed,ok
 MPWR,Monolithic Power Systems Inc,1280452,expanded_ticker_seed,ok
 T,AT&T Inc,732717,expanded_ticker_seed,ok
 VZ,Verizon Communications Inc,732712,expanded_ticker_seed,ok
 CMCSA,Comcast Corp,1166691,expanded_ticker_seed,ok
-DIS,Walt Disney Co,1001039,expanded_ticker_seed,ok
+DIS,Walt Disney Co,1744489,sec_company_tickers_verified,ok
 TMUS,T-Mobile US Inc,1283699,expanded_ticker_seed,ok
 CHTR,Charter Communications Inc,1091667,expanded_ticker_seed,ok
 JPM,JPMorgan Chase & Co,19617,expanded_ticker_seed,ok
@@ -66,10 +66,10 @@ MS,Morgan Stanley,895421,expanded_ticker_seed,ok
 V,Visa Inc,1403161,expanded_ticker_seed,ok
 MA,Mastercard Inc,1141391,expanded_ticker_seed,ok
 AXP,American Express Co,4962,expanded_ticker_seed,ok
-BLK,BlackRock Inc,1364742,expanded_ticker_seed,ok
+BLK,BlackRock Inc,2012383,sec_company_tickers_verified,ok
 C,Citigroup Inc,831001,expanded_ticker_seed,ok
 WFC,Wells Fargo & Co,72971,expanded_ticker_seed,ok
-SCHW,Charles Schwab Corp,316557,expanded_ticker_seed,ok
+SCHW,Charles Schwab Corp,316709,sec_company_tickers_verified,ok
 COF,Capital One Financial Corp,927628,expanded_ticker_seed,ok
 ICE,Intercontinental Exchange Inc,1571949,expanded_ticker_seed,ok
 CME,CME Group Inc,1156375,expanded_ticker_seed,ok
@@ -82,7 +82,7 @@ MRK,Merck & Co Inc,310158,expanded_ticker_seed,ok
 TMO,Thermo Fisher Scientific Inc,97745,expanded_ticker_seed,ok
 ABT,Abbott Laboratories,1800,expanded_ticker_seed,ok
 AMGN,Amgen Inc,318154,expanded_ticker_seed,ok
-GILD,Gilead Sciences Inc,882184,expanded_ticker_seed,ok
+GILD,Gilead Sciences Inc,882095,sec_company_tickers_verified,ok
 VRTX,Vertex Pharmaceuticals Inc,875320,expanded_ticker_seed,ok
 REGN,Regeneron Pharmaceuticals Inc,872589,expanded_ticker_seed,ok
 BMY,Bristol-Myers Squibb Co,14272,expanded_ticker_seed,ok
@@ -103,8 +103,8 @@ KO,Coca-Cola Co,21344,expanded_ticker_seed,ok
 PEP,PepsiCo Inc,77476,expanded_ticker_seed,ok
 PM,Philip Morris International Inc,1413329,expanded_ticker_seed,ok
 CL,Colgate-Palmolive Co,21665,expanded_ticker_seed,ok
-MDLZ,Mondelez International Inc,1418135,expanded_ticker_seed,ok
-GE,GE Aerospace,40554,expanded_ticker_seed,ok
+MDLZ,Mondelez International Inc,1103982,sec_company_tickers_verified,ok
+GE,GE Aerospace,40545,sec_company_tickers_verified,ok
 HON,Honeywell International Inc,773840,expanded_ticker_seed,ok
 CAT,Caterpillar Inc,18230,expanded_ticker_seed,ok
 DE,Deere & Company,315189,expanded_ticker_seed,ok
@@ -112,7 +112,7 @@ MMM,3M Co,66740,expanded_ticker_seed,ok
 UPS,United Parcel Service Inc,1090727,expanded_ticker_seed,ok
 BA,Boeing Co,12927,expanded_ticker_seed,ok
 LMT,Lockheed Martin Corp,936468,expanded_ticker_seed,ok
-FDX,FedEx Corp,230569,expanded_ticker_seed,ok
+FDX,FedEx Corp,1048911,sec_company_tickers_verified,ok
 NOC,Northrop Grumman Corp,1133421,expanded_ticker_seed,ok
 XOM,Exxon Mobil Corp,34088,expanded_ticker_seed,ok
 CVX,Chevron Corp,93410,expanded_ticker_seed,ok
@@ -124,6 +124,6 @@ DUK,Duke Energy Corp,1326160,expanded_ticker_seed,ok
 SO,Southern Co,92122,expanded_ticker_seed,ok
 EQIX,Equinix Inc,1101239,expanded_ticker_seed,ok
 PLD,Prologis Inc,1045609,expanded_ticker_seed,ok
-AMT,American Tower Corp,1053354,expanded_ticker_seed,ok
+AMT,American Tower Corp,1053507,sec_company_tickers_verified,ok
 CVS,CVS Health Corp,64803,expanded_ticker_seed,ok
 PYPL,PayPal Holdings Inc,1633917,expanded_ticker_seed,ok

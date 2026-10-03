@@ -1,7 +1,7 @@
 ticker,company_name,sector,universe_group,cik,notes
 AAPL,Apple Inc,Technology,expanded_100,320193,Mega-cap consumer electronics + services
 MSFT,Microsoft Corp,Technology,expanded_100,789019,Cloud / enterprise software / gaming
-GOOGL,Alphabet Inc,Communication Services,expanded_100,1288776,Search / cloud / YouTube
+GOOGL,Alphabet Inc,Communication Services,expanded_100,1652044,Search / cloud / YouTube
 AMZN,Amazon.com Inc,Consumer Discretionary,expanded_100,1018724,E-commerce / AWS / advertising
 META,Meta Platforms Inc,Communication Services,expanded_100,1326801,Social media / AR / advertising
 NVDA,Nvidia Corp,Technology,expanded_100,1045810,GPU / AI accelerators / data center
@@ -21,9 +21,9 @@ ADI,Analog Devices Inc,Technology,expanded_100,6281,Analog / mixed-signal / DSP
 LRCX,Lam Research Corp,Technology,expanded_100,707549,Semiconductor etch / deposition equipment
 KLAC,KLA Corp,Technology,expanded_100,319201,Semiconductor process control / inspection
 MCHP,Microchip Technology Inc,Technology,expanded_100,827054,Microcontrollers / analog
-ON,ON Semiconductor Corp,Technology,expanded_100,863894,Power / sensing / connectivity chips
+ON,ON Semiconductor Corp,Technology,expanded_100,1097864,Power / sensing / connectivity chips
 SWKS,Skyworks Solutions Inc,Technology,expanded_100,4127,RF / analog semiconductors
-MRVL,Marvell Technology Inc,Technology,expanded_100,1058057,Data infrastructure semiconductors
+MRVL,Marvell Technology Inc,Technology,expanded_100,1835632,Data infrastructure semiconductors
 CRM,Salesforce Inc,Technology,expanded_100,1108524,CRM / cloud business software
 INTU,Intuit Inc,Technology,expanded_100,896878,TurboTax / QuickBooks / Credit Karma
 ADSK,Autodesk Inc,Technology,expanded_100,769397,CAD / construction / media software
@@ -35,7 +35,7 @@ CDNS,Cadence Design Systems Inc,Technology,expanded_100,813672,EDA software / se
 SNPS,Synopsys Inc,Technology,expanded_100,883241,EDA software / semiconductor IP
 CTSH,Cognizant Technology Solutions,Technology,expanded_100,1058290,IT services / consulting
 OKTA,Okta Inc,Technology,expanded_100,1660134,Identity management / zero trust
-DDOG,Datadog Inc,Technology,expanded_100,1707753,Cloud monitoring / observability
+DDOG,Datadog Inc,Technology,expanded_100,1561550,Cloud monitoring / observability
 ZS,Zscaler Inc,Technology,expanded_100,1713683,Cloud security / zero trust network
 MPWR,Monolithic Power Systems Inc,Technology,expanded_100,1280452,Power management semiconductors
 EBAY,eBay Inc,Technology,expanded_100,1065088,E-commerce marketplace
@@ -46,7 +46,7 @@ MSI,Motorola Solutions Inc,Technology,expanded_100,68505,Mission-critical commun
 T,AT&T Inc,Communication Services,expanded_100,732717,Telecom / wireless / fiber
 VZ,Verizon Communications Inc,Communication Services,expanded_100,732712,Wireless / broadband
 CMCSA,Comcast Corp,Communication Services,expanded_100,1166691,Cable / broadband / NBCUniversal
-DIS,Walt Disney Co,Communication Services,expanded_100,1001039,Entertainment / streaming / parks
+DIS,Walt Disney Co,Communication Services,expanded_100,1744489,Entertainment / streaming / parks
 TMUS,T-Mobile US Inc,Communication Services,expanded_100,1283699,Wireless / broadband
 CHTR,Charter Communications Inc,Communication Services,expanded_100,1091667,Cable / broadband
 JPM,JPMorgan Chase & Co,Financials,expanded_100,19617,Diversified banking / investment bank
@@ -56,10 +56,10 @@ MS,Morgan Stanley,Financials,expanded_100,895421,Investment banking / wealth man
 V,Visa Inc,Financials,expanded_100,1403161,Payment network
 MA,Mastercard Inc,Financials,expanded_100,1141391,Payment network
 AXP,American Express Co,Financials,expanded_100,4962,Charge / credit cards / travel
-BLK,BlackRock Inc,Financials,expanded_100,1364742,Asset management / iShares ETFs
+BLK,BlackRock Inc,Financials,expanded_100,2012383,Asset management / iShares ETFs
 C,Citigroup Inc,Financials,expanded_100,831001,Global banking / institutional
 WFC,Wells Fargo & Co,Financials,expanded_100,72971,Retail / commercial banking
-SCHW,Charles Schwab Corp,Financials,expanded_100,316557,Brokerage / wealth / banking
+SCHW,Charles Schwab Corp,Financials,expanded_100,316709,Brokerage / wealth / banking
 COF,Capital One Financial Corp,Financials,expanded_100,927628,Credit cards / banking
 ICE,Intercontinental Exchange Inc,Financials,expanded_100,1571949,Exchange operator / data / mortgage
 CME,CME Group Inc,Financials,expanded_100,1156375,Futures / derivatives exchange
@@ -72,7 +72,7 @@ MRK,Merck & Co Inc,Healthcare,expanded_100,310158,Pharma / oncology / vaccines
 TMO,Thermo Fisher Scientific Inc,Healthcare,expanded_100,97745,Lab instruments / life science tools
 ABT,Abbott Laboratories,Healthcare,expanded_100,1800,Diagnostics / devices / nutrition
 AMGN,Amgen Inc,Healthcare,expanded_100,318154,Biopharmaceuticals / biosimilars
-GILD,Gilead Sciences Inc,Healthcare,expanded_100,882184,Antiviral / oncology biotech
+GILD,Gilead Sciences Inc,Healthcare,expanded_100,882095,Antiviral / oncology biotech
 VRTX,Vertex Pharmaceuticals Inc,Healthcare,expanded_100,875320,Cystic fibrosis / gene editing
 REGN,Regeneron Pharmaceuticals Inc,Healthcare,expanded_100,872589,Antibody medicines / retinal / oncology
 BMY,Bristol-Myers Squibb Co,Healthcare,expanded_100,14272,Oncology / immunology pharma
@@ -93,8 +93,8 @@ KO,Coca-Cola Co,Consumer Staples,expanded_100,21344,Beverage brands
 PEP,PepsiCo Inc,Consumer Staples,expanded_100,77476,Beverages and snacks
 PM,Philip Morris International Inc,Consumer Staples,expanded_100,1413329,Tobacco / smoke-free products
 CL,Colgate-Palmolive Co,Consumer Staples,expanded_100,21665,Oral care / personal care / home care
-MDLZ,Mondelez International Inc,Consumer Staples,expanded_100,1418135,Global snacks / biscuits / chocolate
-GE,GE Aerospace,Industrials,expanded_100,40554,Jet engines / aerospace / defense
+MDLZ,Mondelez International Inc,Consumer Staples,expanded_100,1103982,Global snacks / biscuits / chocolate
+GE,GE Aerospace,Industrials,expanded_100,40545,Jet engines / aerospace / defense
 HON,Honeywell International Inc,Industrials,expanded_100,773840,Aerospace / building automation / safety
 CAT,Caterpillar Inc,Industrials,expanded_100,18230,Construction / mining equipment
 DE,Deere & Company,Industrials,expanded_100,315189,Agricultural / construction equipment
@@ -102,7 +102,7 @@ MMM,3M Co,Industrials,expanded_100,66740,Industrial / safety / consumer products
 UPS,United Parcel Service Inc,Industrials,expanded_100,1090727,Package delivery / logistics
 BA,Boeing Co,Industrials,expanded_100,12927,Commercial / defense aircraft
 LMT,Lockheed Martin Corp,Industrials,expanded_100,936468,Defense / aerospace / government
-FDX,FedEx Corp,Industrials,expanded_100,230569,Express delivery / freight / logistics
+FDX,FedEx Corp,Industrials,expanded_100,1048911,Express delivery / freight / logistics
 NOC,Northrop Grumman Corp,Industrials,expanded_100,1133421,Aerospace / defense / cyber
 XOM,Exxon Mobil Corp,Energy,expanded_100,34088,Integrated oil & gas / chemicals
 CVX,Chevron Corp,Energy,expanded_100,93410,Integrated oil & gas
@@ -114,6 +114,6 @@ DUK,Duke Energy Corp,Utilities,expanded_100,1326160,Electric / gas utility
 SO,Southern Co,Utilities,expanded_100,92122,Electric utility / natural gas
 EQIX,Equinix Inc,Real Estate,expanded_100,1101239,Data center REIT / colocation
 PLD,Prologis Inc,Real Estate,expanded_100,1045609,Industrial / logistics REIT
-AMT,American Tower Corp,Real Estate,expanded_100,1053354,Cell tower REIT / infrastructure
+AMT,American Tower Corp,Real Estate,expanded_100,1053507,Cell tower REIT / infrastructure
 CVS,CVS Health Corp,Healthcare,expanded_100,64803,Pharmacy / PBM / health insurance
 PYPL,PayPal Holdings Inc,Financials,expanded_100,1633917,Digital payments / fintech
