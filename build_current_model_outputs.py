@@ -60,6 +60,7 @@ _REVENUE_CONCEPTS = [
     "RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet",
     "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueGoodsNet",
     "RevenueFromContractWithCustomerNetOfTaxes", "NetRevenues", "TotalRevenues",
+    "RevenuesNetOfInterestExpense",   # banks / brokers (JPM, C, WFC, BLK)
 ]
 _NET_INCOME_CONCEPTS   = ["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"]
 _ASSETS_CONCEPTS       = ["Assets"]
@@ -94,37 +95,67 @@ def _load_facts(cik: str) -> dict | None:
 
 
 def _duration_entries(facts: dict, concepts: list) -> list:
-    """Return quarterly (~90-day duration) USD entries for the first matching concept."""
+    """
+    Return quarterly (~90-day duration) USD entries for the best concept in the chain.
+
+    "Best" = the concept whose latest period end is most recent (needs >= 4 quarters so a
+    TTM can be formed); chain order only breaks ties. This avoids picking a retired tag
+    (e.g. NVDA's old revenue concept) just because it comes first in the fallback list.
+    """
+    best, best_key = [], None
     for ns in ("us-gaap", "ifrs-full"):
         nsf = facts.get("facts", {}).get(ns, {})
-        for c in concepts:
+        for rank, c in enumerate(concepts):
             if c not in nsf:
                 continue
             units = nsf[c].get("units", {})
             if "USD" not in units:
                 continue
-            out = []
+            out, annual = [], []
             for e in units["USD"]:
                 if e.get("start") and e.get("end") and e.get("val") is not None:
                     s = pd.to_datetime(e["start"]); en = pd.to_datetime(e["end"])
                     days = (en - s).days
-                    if 80 <= days <= 100:       # keep only single-quarter durations
-                        out.append({"end": en, "val": float(e["val"]),
-                                    "form": str(e.get("form", "")), "filed": e.get("filed", "")})
-            if out:
-                # de-dupe by end date, keeping the latest-filed amendment
-                by_end: dict = {}
-                for e in sorted(out, key=lambda x: x["filed"]):
-                    by_end[e["end"]] = e
-                return sorted(by_end.values(), key=lambda x: x["end"])
-    return []
+                    rec = {"start": s, "end": en, "val": float(e["val"]),
+                           "form": str(e.get("form", "")), "filed": e.get("filed", "")}
+                    if 80 <= days <= 100:       # single-quarter durations
+                        out.append(rec)
+                    elif 350 <= days <= 380:    # full fiscal year (10-K)
+                        annual.append(rec)
+            if not out:
+                continue
+            # de-dupe by end date, keeping the latest-filed amendment
+            by_end: dict = {}
+            for e in sorted(out, key=lambda x: x["filed"]):
+                by_end[e["end"]] = e
+            # SEC reports no standalone Q4: derive it as annual - (Q1+Q2+Q3) so that
+            # four consecutive entries really are a trailing twelve months.
+            ann_by_end: dict = {}
+            for a in sorted(annual, key=lambda x: x["filed"]):
+                ann_by_end[a["end"]] = a
+            for a_end, a in ann_by_end.items():
+                if a_end in by_end:
+                    continue
+                qs = [q for q in by_end.values()
+                      if q["start"] >= a["start"] - pd.Timedelta(days=5) and q["end"] < a_end - pd.Timedelta(days=30)]
+                if len(qs) == 3:
+                    by_end[a_end] = {"start": a["start"], "end": a_end,
+                                     "val": a["val"] - sum(q["val"] for q in qs),
+                                     "form": a["form"], "filed": a["filed"], "derived_q4": True}
+            entries = sorted(by_end.values(), key=lambda x: x["end"])
+            key = (len(entries) >= 4, entries[-1]["end"], -rank)
+            if best_key is None or key > best_key:
+                best, best_key = entries, key
+    return best
 
 
 def _instant_latest(facts: dict, concepts: list, as_of: pd.Timestamp | None = None) -> float | None:
-    """Return the latest point-in-time (instant) USD value at/before as_of (or overall latest)."""
+    """Latest point-in-time (instant) USD value at/before as_of, taken from whichever
+    concept in the chain has the most recent date (chain order breaks ties)."""
+    best, best_key = None, None
     for ns in ("us-gaap", "ifrs-full"):
         nsf = facts.get("facts", {}).get(ns, {})
-        for c in concepts:
+        for rank, c in enumerate(concepts):
             if c not in nsf:
                 continue
             units = nsf[c].get("units", {})
@@ -138,8 +169,10 @@ def _instant_latest(facts: dict, concepts: list, as_of: pd.Timestamp | None = No
                         cands.append((en, e.get("filed", ""), float(e["val"])))
             if cands:
                 cands.sort(key=lambda x: (x[0], x[1]))
-                return cands[-1][2]
-    return None
+                key = (cands[-1][0], -rank)
+                if best_key is None or key > best_key:
+                    best, best_key = cands[-1][2], key
+    return best
 
 
 def _ttm(entries: list, end_before: pd.Timestamp | None = None) -> tuple:
